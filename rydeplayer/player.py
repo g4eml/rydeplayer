@@ -67,17 +67,20 @@ class guiState(rydeplayer.states.gui.SuperStates):
     def startup(self, config, debugFunctions):
         # main menu states, order is important to get menus and sub menus to display in the right place
         mainMenuStates = {
-            'freq-sel' : rydeplayer.states.gui.NumberSelect(self.theme, 'freq', 'KHz', config.tuner.freq, config.tuner.setFrequency),
+            'freq-sel' : rydeplayer.states.gui.NumberSelect(self.theme, 'freq', 'kHz', config.tuner.freq, config.tuner.setFrequency),
             'freq'     : rydeplayer.states.gui.MenuItem(self.theme, "Frequency", "port", "sr", "freq-sel", config.tuner.freq),
-            'sr-sel'   : rydeplayer.states.gui.NumberSelect(self.theme, 'sr', 'KSPS', config.tuner.sr, config.tuner.setSymbolRate),
-            'sr'       : rydeplayer.states.gui.MenuItem(self.theme, "Symbol Rate", "freq", "pol", "sr-sel", config.tuner.sr),
+            'sr-sel'   : rydeplayer.states.gui.NumberSelect(self.theme, 'sr', 'kS', config.tuner.sr, config.tuner.setSymbolRate),
+            'sr'       : rydeplayer.states.gui.MenuItem(self.theme, "Symbol Rate", "freq", "band", "sr-sel", config.tuner.sr),
+            'band-sel'  : rydeplayer.states.gui.ListSelect(self.theme, 'band', config.bands, config.tuner.band, config.tuner.setBand),
+            'band'      : rydeplayer.states.gui.MenuItem(self.theme, "Band", "sr", "pol", "band-sel"),
             'pol-sel'  : rydeplayer.states.gui.ListSelect(self.theme, 'pol', {longmynd.PolarityEnum.NONE:'None', longmynd.PolarityEnum.HORIZONTAL:'Horizontal', longmynd.PolarityEnum.VERTICAL:'Vertical'}, config.tuner.pol, config.tuner.setPolarity),
-            'pol'      : rydeplayer.states.gui.MenuItem(self.theme, "LNB Polarity", "sr", "port", "pol-sel"),
+            'pol'      : rydeplayer.states.gui.MenuItem(self.theme, "LNB Polarity", "band", "port", "pol-sel"),
             'port-sel' : rydeplayer.states.gui.ListSelect(self.theme, 'port', {longmynd.inPortEnum.TOP:'Top', longmynd.inPortEnum.BOTTOM:'Bottom'}, config.tuner.port, config.tuner.setInputPort),
             'port'     : rydeplayer.states.gui.MenuItem(self.theme, "Input Port", "pol", "freq", "port-sel"),
 #            'autoplay-sel' : rydeplayer.states.gui.ListSelect(self.theme, 'autoplay', {True:'Enabled', False:'Disabled'}, config.debug.autoplay, config.setAutoplay),
 #            'autoplay' : rydeplayer.states.gui.MenuItem(self.theme, "Autoplay", "port", "vlcplay", "autoplay-sel"),
         }
+
         firstkey = 'freq'
         lastkey = 'port'
         for key in debugFunctions:
@@ -130,7 +133,11 @@ class rydeConfig(object):
             'binpath': '/home/pi/longmynd/longmynd',
             'mediapath': '/home/pi/lmmedia',
             'statuspath': '/home/pi/lmstatus',
+            'tstimeout': 5000,
             })
+        self.bands = {}
+        defaultBand = longmynd.tunerBand()
+        self.bands[defaultBand] = "None"
         self.debug = type('debugConfig', (object,), {
             'autoplay': True,
             'disableHardwareCodec': True,
@@ -155,6 +162,26 @@ class rydeConfig(object):
                     return False
             else:
                 print("WARNING: no config revision present, config load my fail")
+            if 'bands' in config:
+                if isinstance(config['bands'], dict):
+                    newBands = {}
+                    exsistingBands = list(self.bands.keys())
+                    for bandName in config['bands']:
+                        bandDict = config['bands'][bandName]
+                        bandObject = longmynd.tunerBand()
+                        if bandObject.loadBand(bandDict):
+                            # dedupe band object with exsisting library
+                            if bandObject in exsistingBands:
+                                bandObject = exsistingBands[exsistingBands.index(bandObject)]
+                            newBands[bandObject] = str(bandName)
+                    if len(newBands) > 1:
+                        self.bands = newBands
+                    else:
+                        print("No valid bands, skipping")
+
+                else:
+                    print("Invalid band library")
+                    perfectConfig = False
             # parse critical longmynd paths
             if 'longmynd' in config:
                 if isinstance(config['longmynd'], dict):
@@ -177,12 +204,18 @@ class rydeConfig(object):
                         else:
                             print("Invalid longymnd status FIFO path")
                             perfectConfig = False
+                    if 'tstimeout' in config['longmynd']:
+                        if isinstance(config['longmynd']['tstimeout'], int):
+                            self.longmynd.tstimeout = config['longmynd']['tstimeout']
+                        else:
+                            print("Invalid longmynd TS timeout")
+                            perfectConfig = False
                 else:
                     print("Invalid longmynd config")
                     perfectConfig = False
             # pass default tuner config to be parsed by longmynd module
             if 'default' in config:
-                perfectConfig = perfectConfig and self.tuner.loadConfig(config['default'])
+                perfectConfig = perfectConfig and self.tuner.loadConfig(config['default'], list(self.bands.keys()))
             # pass ir config to be parsed by the ir config container
             if 'ir' in config:
                 perfectConfig = perfectConfig and self.ir.loadConfig(config['ir'])
@@ -240,7 +273,7 @@ class player(object):
         print(pygame.font.get_fonts())
 
         # setup longmynd
-        self.lmMan = longmynd.lmManager(self.config.tuner, self.config.longmynd.binpath, self.config.longmynd.mediapath, self.config.longmynd.statuspath)
+        self.lmMan = longmynd.lmManager(self.config.tuner, self.config.longmynd.binpath, self.config.longmynd.mediapath, self.config.longmynd.statuspath, self.config.longmynd.tstimeout)
         self.config.tuner.setCallbackFunction(self.lmMan.reconfig)
 
         self.vlcStartup()
@@ -281,7 +314,7 @@ class player(object):
         elif(fd in self.lmMan.getFDs()):
             self.lmMan.handleFD(fd)
         elif(fd in self.gpioMan.getFDs()):
-            self.gpioMan.handleFD(fd)
+            quit = self.gpioMan.handleFD(fd)
         return quit
 
     def updateState(self):
@@ -336,11 +369,14 @@ class player(object):
         self.vlcStartup()
 
     def vlcStartup(self):
+        vlcArgs = ''
+        displaySize = pydispmanx.getDisplaySize()
+        vlcArgs += '--width '+str(displaySize[0])+' --height '+str(displaySize[1])+' '
         if self.config.debug.disableHardwareCodec:
-            self.vlcInstance = vlc.Instance('--codec ffmpeg')
-        else:
-            self.vlcInstance = vlc.Instance()
-#            self.vlcInstance = vlc.Instance('--gain 4 --alsa-audio-device hw:CARD=Headphones,DEV=0')
+            vlcArgs += '--codec ffmpeg '
+#        vlcArgs += '--gain 4 --alsa-audio-device hw:CARD=Headphones,DEV=0 '
+        print(vlcArgs)
+        self.vlcInstance = vlc.Instance(vlcArgs)
 
         self.vlcPlayer = self.vlcInstance.media_player_new()
         self.vlcMedia = self.vlcInstance.media_new_fd(self.lmMan.getMediaFd().fileno())
