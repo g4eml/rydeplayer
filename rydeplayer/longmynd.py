@@ -15,6 +15,7 @@
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import enum, os, stat, subprocess, pty, select, copy, fcntl
+import rydeplayer.common
 
 class inPortEnum(enum.Enum):
     TOP = enum.auto()
@@ -25,27 +26,154 @@ class PolarityEnum(enum.Enum):
     HORIZONTAL = enum.auto()
     VERTICAL = enum.auto()
 
-class tunerConfig(object):
+class LOOffsetSideEnum(enum.Enum):
+    HIGH = enum.auto()
+    LOW = enum.auto()
+
+class tunerBand(object):
+    def __init__(self):
+        self.freq = 0
+        self.loside = LOOffsetSideEnum.LOW
+
+
+    def setBand(self, freq, loside):
+        self.freq = freq
+        self.loside = loside
+
+    def loadBand(self, config):
+        configUpdated = False
+        perfectConfig = True
+        if not isinstance(config, dict):
+            print("Band invalid, skipping")
+            perfectConfig = False
+        else:
+            # check lo frequency and side, both must be valid for either to be updated
+            if 'lofreq' in config:
+                if isinstance(config['lofreq'], int):
+                    # lo frequency is valid, check side
+                    if 'loside' in config:
+                        if isinstance(config['loside'], str):
+                            for losideopt in LOOffsetSideEnum:
+                                if losideopt.name == config['loside'].upper():
+                                    self.loside = losideopt
+                                    self.freq = config['lofreq']
+                                    configUpdated = True
+                                    break
+                        if not configUpdated:
+                            print("Band LO side invalid, skipping frequency and LO side")
+                            perfectConfig = False
+                    else:
+                        print("Band LO side missing, skipping frequency and LO side")
+                        perfectConfig = False
+                else:
+                    print("LO frequency config invalid, skipping frequency and symbol rate")
+                    perfectConfig = False
+            else:
+                print("LO frequency config missing, skipping frequency and symbol rate")
+                perfectConfig = False
+        return perfectConfig
+
+    def getFrequency(self):
+        return self.freq
+
+    def getLOSide(self):
+        return self.loside
+
+    # return tuner frequency from requested frequency
+    def mapReqToTune(self, freq):
+        if self.loside == LOOffsetSideEnum.LOW:
+            if freq > self.freq:
+                return freq - self.freq
+            else:
+                return self.freq - freq
+        else:
+            return freq + self.freq
+
+
+    # return request frequency from tuner frequeny
+    def mapTuneToReq(self, freq):
+        if self.loside == LOOffsetSideEnum.HIGH:
+            if freq > self.freq:
+                return freq - self.freq
+            else:
+                return self.freq - freq
+        else:
+            return freq + self.freq
+    
+    def getOffsetStr(self):
+        output = ""
+        if self.loside == LOOffsetSideEnum.HIGH:
+            output += "+"
+        else:
+            output += "-"
+        output += str(self.freq)
+        return output
+
+    def __eq__(self,other):
+        # compare 2 bands
+        if not isinstance(other,tunerBand):
+            return NotImplemented
+        else:
+            return self.freq == other.freq and self.loside == other.loside
+    
+    def __hash__(self):
+        return hash((self.freq, self.loside))
+
+class tunerConfigInt(rydeplayer.common.validTracker):
+    def __init__(self, value, minval, maxval):
+        self.value = value
+        self.minval = minval
+        self.maxval = maxval
+        # Initalise valid tracker with current valid status
+        super().__init__(value >= minval and value <= maxval)
+
+    def setValue(self, newval):
+        if self.value != newval:
+            self.value = newval
+            self.updateValid(self.value >= self.minval and self.value <= self.maxval)
+
+    def setLimits(self, newMin, newMax):
+        if self.minval != newMin or self.maxval != newMax:
+            self.minval = newMin
+            self.maxval = newMax
+            self.updateValid(self.value >= self.minval and self.value <= self.maxval)
+
+    def getValue(self):
+        return self.value
+
+    def getMinValue(self):
+        return self.minval
+
+    def getMaxValue(self):
+        return self.maxval
+        
+
+class tunerConfig(rydeplayer.common.validTracker):
     def __init__(self):
         # default is QO-100 Beacon
         self.updateCallback = None # function that is called when the config changes
-        self.setConfig(741500, 1500, PolarityEnum.NONE, inPortEnum.TOP)
+        self.band = tunerBand()
+        self.band.setBand(0, LOOffsetSideEnum.LOW)
+        self.tunerMinFreq = 144000
+        self.tunerMaxFreq = 2450000
+        defaultfreq = 741500
+        self.freq = tunerConfigInt(defaultfreq, self.band.mapTuneToReq(self.tunerMinFreq), self.band.mapTuneToReq(self.tunerMaxFreq))
+        self.freq.addValidCallback(self.updateValid)
+        self.sr = tunerConfigInt(1500, 33, 27500)
+        self.sr.addValidCallback(self.updateValid)
+        self.setConfig(defaultfreq, 1500, PolarityEnum.NONE, inPortEnum.TOP, self.band)
+        super().__init__(self.calcValid())
 
-#    def __init__(self, freq, sr, pol, port):
-#        self.freq = freq # frequency
-#        self.sr = sr # symbol rate
-#        self.pol = pol # LNB polarity / output voltage select, none, horizontal, vertical
-#        self.port = port # input port (top/bottom f connector)
-#        self.updateCallback = None # function that is called when the config changes
-
-    def setConfig(self, freq, sr, pol, port):
-        self.freq = freq
-        self.sr = sr
+    def setConfig(self, freq, sr, pol, port, band):
+        self.freq.setValue(freq)
+        self.sr.setValue(sr)
         self.pol = pol
         self.port = port
+        self.band = band
+        self.freq.setLimits(self.band.mapTuneToReq(self.tunerMinFreq), self.band.mapTuneToReq(self.tunerMaxFreq))
         self.runCallback()
 
-    def loadConfig(self, config):
+    def loadConfig(self, config, bandLibrary = []):
         configUpdated = False
         perfectConfig = True
         if not isinstance(config, dict):
@@ -58,8 +186,8 @@ class tunerConfig(object):
                     # frequency is valid, check symbol rate
                     if 'sr' in config:
                         if isinstance(config['sr'], int):
-                            self.freq = config['freq']
-                            self.sr = config['sr']
+                            self.freq.setValue(config['freq'])
+                            self.sr.setValue(config['sr'])
                             configUpdated = True
                         else:
                             print("Symbol rate config invalid, skipping frequency and symbol rate")
@@ -72,6 +200,20 @@ class tunerConfig(object):
                     perfectConfig = False
             else:
                 print("Frequency config missing, skipping frequency and symbol rate")
+                perfectConfig = False
+
+            if 'band' in config:
+                bandObject = tunerBand()
+                if bandObject.loadBand(config['band']):
+                    # dedupe band obects with library
+                    if bandObject in bandLibrary:
+                        bandObject = bandLibrary[bandLibrary.index(bandObject)]
+                    self.band = bandObject
+                else:
+                    print("Could not load default band, skipping")
+                    perfectConfig = False
+            else:
+                print("Band config missing, skipping")
                 perfectConfig = False
 
             if 'pol' in config:
@@ -111,15 +253,16 @@ class tunerConfig(object):
             else:
                 print("Input port config missing, skipping")
                 perfectConfig = False
+        self.freq.setLimits(self.band.mapTuneToReq(self.tunerMinFreq), self.band.mapTuneToReq(self.tunerMaxFreq))
         if configUpdated: # run the callback if we chaged something
             self.runCallback()
         return perfectConfig
 
     def setFrequency(self, newFreq):
-        self.freq = newFreq
+        self.freq.setValue(newFreq)
         self.runCallback()
     def setSymbolRate(self, newSr):
-        self.sr = newSr
+        self.sr.setValue(newSr)
         self.runCallback()
     def setPolarity(self, newPol):
         self.pol = newPol
@@ -127,36 +270,52 @@ class tunerConfig(object):
     def setInputPort(self, newPort):
         self.port = newPort
         self.runCallback()
+    def setBand(self, newBand):
+        self.band = newBand
+        self.freq.setLimits(self.band.mapTuneToReq(self.tunerMinFreq), self.band.mapTuneToReq(self.tunerMaxFreq))
+        self.runCallback()
     def setCallbackFunction(self, newCallback):
         self.updateCallback = newCallback
+
+    def updateValid(self):
+        return super().updateValid(self.calcValid())
+
+    def calcValid(self):
+        newValid = True
+        newValid = newValid and self.freq.isValid()
+        newValid = newValid and self.sr.isValid()
+        return newValid;
+
     def runCallback(self):
-        if(self.updateCallback is not None):
+        if self.updateCallback is not None :
             self.updateCallback(self)
     def copyConfig(self):
         # return a copy of the config details but with no callback connected
         newConfig = tunerConfig()
-        newConfig.setConfig(self.freq, self.sr, self.pol, self.port)
+        newConfig.setConfig(self.freq.getValue(), self.sr.getValue(), self.pol, self.port, self.band)
         return newConfig
     def __eq__(self,other):
         # compare 2 configs ignores the callback
         if not isinstance(other,tunerConfig):
             return NotImplemented
         else:
-            return self.freq == other.freq and self.sr == other.sr and self.pol == other.pol and self.port ==other.port
+            return self.freq.getValue() == other.freq.getValue() and self.sr.getValue() == other.sr.getValue() and self.pol == other.pol and self.port ==other.port and self.band == other.band
     def __str__(self):
         output = ""
-        output += "  Frequency: "+str(self.freq)+"\n"
-        output += "Symbol Rate: "+str(self.sr)+"\n"
-        output += "   Polarity: "+str(self.pol)+"\n"
-        output += "       Port: "+str(self.port)
+        output += "Request Frequency: "+str(self.freq.getValue())+"\n"
+        output += "        IF offset: "+self.band.getOffsetStr()+"\n"
+        output += "      Symbol Rate: "+str(self.sr.getValue())+"\n"
+        output += "         Polarity: "+str(self.pol)+"\n"
+        output += "             Port: "+str(self.port)
         return output
 
 class lmManager(object):
-    def __init__(self, config, lmpath, mediaFIFOpath, statusFIFOpath):
+    def __init__(self, config, lmpath, mediaFIFOpath, statusFIFOpath, tsTimeout):
         # path to the longmynd binary
         self.lmpath = lmpath
         self.mediaFIFOfilename = mediaFIFOpath
         self.statusFIFOfilename = statusFIFOpath
+        self.tsTimeout = tsTimeout
         #TODO: add error handling here
         if(not os.path.exists(self.mediaFIFOfilename)):
             os.mkfifo(self.mediaFIFOfilename)
@@ -295,53 +454,57 @@ class lmManager(object):
     def processStdout(self):
         """track the starup state of longmynd from its STDOUT"""
         rawnewlines = self.stdoutReadfd.readlines()
+        stop = False
         for rawnewline in rawnewlines:
             newline = rawnewline.rstrip()
             self.lmlog.append(newline)
-            if(newline.startswith("ERROR:")):
-                # its probably crashed, stop and output
-                # some errors are't critical while lna are initalising, might just be an old NIM
-                if(self.lnaIniting and newline.startswith("ERROR: i2c read reg8")):
-                    self.lnaErrorCount += 1
-                elif(not (self.lnaIniting and newline.startswith("ERROR: lna read"))):
-                    self.stop(True, True)
-            if(newline.lstrip().startswith("Flow:")):
-                flowline = (newline.lstrip()[6:])
-                if(flowline.startswith("LNA init")):
-                    # start tracking LNA initalisation errors
-                    self.lnaIniting = True
-                    self.lnaErrorCount = 0
-            if(newline.lstrip().startswith("Status:")):
-                lnaLines = ['found new NIM with LNAs', 'found an older NIM with no LNA']
-                statusline = newline.lstrip()[8:]
+            if not stop:
+                if(newline.startswith("ERROR:")):
+                    # its probably crashed, stop and output
+                    # some errors are't critical while lna are initalising, might just be an old NIM
+                    if(self.lnaIniting and newline.startswith("ERROR: i2c read reg8")):
+                        self.lnaErrorCount += 1
+                    elif(not (self.lnaIniting and newline.startswith("ERROR: lna read"))):
+                        stop = True
+                if(newline.lstrip().startswith("Flow:")):
+                    flowline = (newline.lstrip()[6:])
+                    if(flowline.startswith("LNA init")):
+                        # start tracking LNA initalisation errors
+                        self.lnaIniting = True
+                        self.lnaErrorCount = 0
+                if(newline.lstrip().startswith("Status:")):
+                    lnaLines = ['found new NIM with LNAs', 'found an older NIM with no LNA']
+                    statusline = newline.lstrip()[8:]
 
-                if(statusline in lnaLines):
-                    # stop tracking LNA initalisation errors and stop if there are more than expected errors
-                    self.lnaIniting = False
-                    self.lnaErrorCount = 0
-                    if(self.lnaErrorCount > 1):
-                        self.stop(True, True)
-                self.statelog.append(statusline)
-                fifosopen = 0
-                usbopen = False
-                stvopen = False
-                tuneropen = False
-                lnasfound = 0
-                for line in self.statelog:
-                    if(line == 'opened fifo ok'):
-                        fifosopen += 1
-                    elif(line.startswith('MPSSE')):
-                        usbopen = True
-                    elif(line.startswith('STV0910 MID')):
-                        stvopen = True
-                    elif(line.startswith('tuner:')):
-                        tuneropen = True
-                    elif(line in lnaLines):
-                        lnasfound += 1
+                    if(statusline in lnaLines):
+                        # stop tracking LNA initalisation errors and stop if there are more than expected errors
+                        self.lnaIniting = False
+                        self.lnaErrorCount = 0
+                        if(self.lnaErrorCount > 1):
+                            stop = True
+                    self.statelog.append(statusline)
+                    fifosopen = 0
+                    usbopen = False
+                    stvopen = False
+                    tuneropen = False
+                    lnasfound = 0
+                    for line in self.statelog:
+                        if(line == 'opened fifo ok'):
+                            fifosopen += 1
+                        elif(line.startswith('MPSSE')):
+                            usbopen = True
+                        elif(line.startswith('STV0910 MID')):
+                            stvopen = True
+                        elif(line.startswith('tuner:')):
+                            tuneropen = True
+                        elif(line in lnaLines):
+                            lnasfound += 1
     
-                if(fifosopen==2 and usbopen and stvopen and tuneropen and lnasfound==2):
-                    self.lmstarted = True
-                    print("lm started")
+                    if(fifosopen==2 and usbopen and stvopen and tuneropen and lnasfound==2):
+                        self.lmstarted = True
+                        print("lm started")
+        if stop:
+            self.stop(True,True)
 
     def stop(self, dumpOutput = False, waitfirst=False):
         #waitfirst is for if its crashed and we want to wait for it to die on its own so we get all the output
@@ -364,6 +527,7 @@ class lmManager(object):
                 break
             newline = rawnewline.rstrip()
             self.lmlog.append(newline)
+
         self.stdoutReadfd.close()
         self.statusFIFOfd.close()
         #open a clean buffer ready for the restart
@@ -380,24 +544,27 @@ class lmManager(object):
             for logline in self.lmlog:
                 print(logline)
     def start(self):
-        if(self.process == None):
-            print("start")
-            self.lmstarted = False
-            self.statusrecv = False
-            self.statelog=[]
-            self.lmlog=[]
-            args = [self.lmpath, '-t', self.mediaFIFOfilename, '-s', self.statusFIFOfilename]
-            if self.activeConfig.port == inPortEnum.BOTTOM:
-                args.append('-w')
-            if self.activeConfig.pol == PolarityEnum.HORIZONTAL:
-                args.extend(['-p', 'h'])
-            elif self.activeConfig.pol == PolarityEnum.VERTICAL:
-                args.extend(['-p', 'v'])
-            args.append(str(self.activeConfig.freq))
-            args.append(str(self.activeConfig.sr))
-            self.process = subprocess.Popen(args, stdout=self.stdoutWritefd, stderr=subprocess.STDOUT, bufsize=0)
+        if self.activeConfig.isValid():
+            if self.process == None :
+                print("start")
+                self.lmstarted = False
+                self.statusrecv = False
+                self.statelog=[]
+                self.lmlog=[]
+                args = [self.lmpath, '-t', self.mediaFIFOfilename, '-s', self.statusFIFOfilename, '-r', str(self.tsTimeout)]
+                if self.activeConfig.port == inPortEnum.BOTTOM:
+                    args.append('-w')
+                if self.activeConfig.pol == PolarityEnum.HORIZONTAL:
+                    args.extend(['-p', 'h'])
+                elif self.activeConfig.pol == PolarityEnum.VERTICAL:
+                    args.extend(['-p', 'v'])
+                args.append(str(self.activeConfig.band.mapReqToTune(self.activeConfig.freq.getValue())))
+                args.append(str(self.activeConfig.sr.getValue()))
+                self.process = subprocess.Popen(args, stdout=self.stdoutWritefd, stderr=subprocess.STDOUT, bufsize=0)
+            else:
+                print("LM already running")
         else:
-            print("LM already running")
+            print("Can't start, config invalid")
     def restart(self):
         if(self.process != None):
             self.stop()
