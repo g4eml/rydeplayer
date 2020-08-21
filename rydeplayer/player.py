@@ -67,9 +67,9 @@ class guiState(rydeplayer.states.gui.SuperStates):
     def startup(self, config, debugFunctions):
         # main menu states, order is important to get menus and sub menus to display in the right place
         mainMenuStates = {
-            'freq-sel' : rydeplayer.states.gui.NumberSelect(self.theme, 'freq', 'kHz', config.tuner.freq, config.tuner.setFrequency),
+            'freq-sel' : rydeplayer.states.gui.MultipleNumberSelect(self.theme, 'freq', 'kHz', 'Freq', config.tuner.freq, config.tuner.runCallback),
             'freq'     : rydeplayer.states.gui.MenuItem(self.theme, "Frequency", "port", "sr", "freq-sel", config.tuner.freq),
-            'sr-sel'   : rydeplayer.states.gui.NumberSelect(self.theme, 'sr', 'kS', config.tuner.sr, config.tuner.setSymbolRate),
+            'sr-sel'   : rydeplayer.states.gui.MultipleNumberSelect(self.theme, 'sr', 'kS', 'SR', config.tuner.sr, config.tuner.runCallback),
             'sr'       : rydeplayer.states.gui.MenuItem(self.theme, "Symbol Rate", "freq", "band", "sr-sel", config.tuner.sr),
             'band-sel'  : rydeplayer.states.gui.ListSelect(self.theme, 'band', config.bands, config.tuner.band, config.tuner.setBand),
             'band'      : rydeplayer.states.gui.MenuItem(self.theme, "Band", "sr", "pol", "band-sel"),
@@ -95,8 +95,8 @@ class guiState(rydeplayer.states.gui.SuperStates):
             'home': Home(self.theme)
         }
         # add callback to rederaw menu item if tuner data is updated
-        config.tuner.freq.addValidCallback(functools.partial(self.state_dict['menu'].redrawState, mainMenuStates['freq']))
-        config.tuner.sr.addValidCallback(functools.partial(self.state_dict['menu'].redrawState, mainMenuStates['sr']))
+        config.tuner.freq.addValidCallback(functools.partial(self.state_dict['menu'].redrawState, mainMenuStates['freq'], mainMenuStates['freq'].getSurfaceRects()))
+        config.tuner.sr.addValidCallback(functools.partial(self.state_dict['menu'].redrawState, mainMenuStates['sr'], mainMenuStates['sr'].getSurfaceRects()))
         self.state_name = "home"
         self.state = self.state_dict[self.state_name]
         self.state.startup()
