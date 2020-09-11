@@ -17,7 +17,7 @@ Install Longmynd. Currently recommending that you use this fork as it has fixes 
 ## Config Files
 A complete sample YAML config file is provided as `config.sample.yaml`, this contains all currently configurable options. If some options are omitted from the config file then internal defaults will be used.
 ### Config file options
-* ```configRev``` The config format revision of this file, if present but wrong the file will not load, if missing file will load with warning. Current revision is 1
+* ```configRev``` The config format revision of this file, if present but wrong the file will not load, if missing file will load with warning. Current revision is 2
 * ```longmynd``` This section defines the paths for your Longmynd installation
   * ```binpath``` path to the Longmynd binary.
   * ```mediapath``` path to Longmynd's media FIFO, this will be auto-created if it doesn't exist.
@@ -27,12 +27,17 @@ A complete sample YAML config file is provided as `config.sample.yaml`, this con
   * Name of the band, you may have to put it in double quotes ```"``` if you want to use names with various caracters such as ```:``` in it. It is recommended that you add an anchor if you need to reference the band later, e.g. ```"LNB Low": &bandlnblow```
     * ```lofreq``` LO frequency value in kHz
     * ```loside``` Select either ```HIGH``` or ```LOW``` depending on if the IF is above or below the LO frequency respectively
+    * ```pol``` Band polarity, selects bias voltage. Choose from ```NONE```, ```HORIZONTAL``` or ```VERTICAL```
+    * ```port``` Band input port. Choose from ```TOP``` or ```BOTTOM```
+    * ```gpioid``` Band GPIO ID, valid values are 0-7.
+* ```presets```
+  * Name of the preset, following the same naming rules as for bands above. It is also recommended you add an anchor to a preset to use as the default also similar to bands above, e.g. ```"QO-100 Beacon": &presetdefault```
+    * ```freq``` Preset frequency to tune, this can either be a single frequency or a list of frequencies to enable frequency scanning
+    * ```band``` Preset band, its recommended to use an alias to a band in the band library, e.g. ```band: *bandlnblow```
+    * ```sr``` Preset symbol rate in kSps, this can either be a single symbol rate or a list of symbol rates to enable symbol rate scanning
+
 * ```default```
-  * ```freq``` Initial frequency to tune to on startup, this can either be a single frequency or a list of frequencies to enable frequency scanning
-  * ```band``` Initial band, its recommended to use an alias to the band in the band library, e.g. ```band: *bandlnblow```
-  * ```sr``` Initial symbol rate in kSps, this can either be a single symbol rate or a list of symbol rates to enable symbol rate scanning
-  * ```pol``` Initial polarity, selects bias voltage. Choose from ```NONE```, ```HORIZONTAL``` or ```VERTICAL```
-  * ```port``` Initial inpuit port. Choose from ```TOP``` or ```BOTTOM```
+  * Initial settings, its recommended to use an alias to a preset in the preset library, e.g. ```default: *presetdefault```
 * ```ir``` This section defines the IR handset behaviour.
   * ```repeatFirst``` The time to wait before beginning to repeat an IR events in ms.
   * ```repeatDelay``` The time between repeats once repeating has begun in ms.
@@ -44,7 +49,9 @@ A complete sample YAML config file is provided as `config.sample.yaml`, this con
   * ```repeatDelay``` The time between repeats once repeating has begun in ms.
   * ```rxGood``` The BCM pin number to output the reciver locked indication to. For example to output the signal on pin 7 set this to 4.
   * ```buttons``` A map of button names to BCM pin numbers.
+* ```shutdownBehavior``` The default shutdown option when the power button is double pressed. Choose from ```APPSTOP``` or ```APPREST``` to stop the player or restart the player respectively.
 * ```debug``` Debug options, for advanced users, do not rely on these, they may go away without notice
+  * ```enableMenu``` Enable the debug menu entry
   * ```autoplay``` Auto play the stream on lock, should be set to True.
   * ```disableHardwareCodec``` Disable hardware decoder in VLC, recommend setting to True, uses more CPU but is more reliable at decoding.
 

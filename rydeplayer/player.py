@@ -14,7 +14,7 @@
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import pygame, vlc, select, pydispmanx, yaml, os, pkg_resources, argparse, importlib, functools
+import pygame, vlc, select, pydispmanx, yaml, os, pkg_resources, argparse, importlib, functools, sys
 from . import longmynd
 from . import ir
 import rydeplayer.gpio
@@ -59,36 +59,70 @@ class Theme(object):
                 fontsize += 1
         return fontsize
 
+# power menu UI state machine
+class SubMenuPower(rydeplayer.states.gui.ListSelect):
+    def __init__(self, theme, backState, shutdownCallback):
+        items = {
+                    rydeplayer.common.shutdownBehavior.APPSTOP : 'App Shutdown',
+                    rydeplayer.common.shutdownBehavior.APPREST : 'App Restart',
+                    rydeplayer.common.shutdownBehavior.SYSSTOP : 'System Shutdown',
+                    rydeplayer.common.shutdownBehavior.SYSREST : 'System Restart',
+                }
+        super().__init__(theme, backState, items, lambda: rydeplayer.common.shutdownBehavior.APPSTOP, shutdownCallback)
+    def get_event(self, event):
+        if super().get_event(event):
+            return True
+        else:
+            if event == rydeplayer.common.navEvent.POWER:
+                return super().get_event(rydeplayer.common.navEvent.SELECT)
+
+            else:
+                return False
+
 # main UI state machine
 class guiState(rydeplayer.states.gui.SuperStates):
-    def __init__(self, theme):
+    def __init__(self, theme, shutdownBehaviorDefault):
         super().__init__(theme)
         self.done = False
+        self.shutdownBehaviorDefault = shutdownBehaviorDefault
+        self.shutdownState = rydeplayer.common.shutdownBehavior.APPSTOP
     def startup(self, config, debugFunctions):
         # main menu states, order is important to get menus and sub menus to display in the right place
         mainMenuStates = {
             'freq-sel' : rydeplayer.states.gui.MultipleNumberSelect(self.theme, 'freq', 'kHz', 'Freq', config.tuner.freq, config.tuner.runCallback),
-            'freq'     : rydeplayer.states.gui.MenuItem(self.theme, "Frequency", "port", "sr", "freq-sel", config.tuner.freq),
+            'freq'     : rydeplayer.states.gui.MenuItem(self.theme, "Frequency", "power", "sr", "freq-sel", config.tuner.freq),
             'sr-sel'   : rydeplayer.states.gui.MultipleNumberSelect(self.theme, 'sr', 'kS', 'SR', config.tuner.sr, config.tuner.runCallback),
             'sr'       : rydeplayer.states.gui.MenuItem(self.theme, "Symbol Rate", "freq", "band", "sr-sel", config.tuner.sr),
-            'band-sel'  : rydeplayer.states.gui.ListSelect(self.theme, 'band', config.bands, config.tuner.band, config.tuner.setBand),
-            'band'      : rydeplayer.states.gui.MenuItem(self.theme, "Band", "sr", "pol", "band-sel"),
-            'pol-sel'  : rydeplayer.states.gui.ListSelect(self.theme, 'pol', {longmynd.PolarityEnum.NONE:'None', longmynd.PolarityEnum.HORIZONTAL:'Horizontal', longmynd.PolarityEnum.VERTICAL:'Vertical'}, config.tuner.pol, config.tuner.setPolarity),
-            'pol'      : rydeplayer.states.gui.MenuItem(self.theme, "LNB Polarity", "band", "port", "pol-sel"),
-            'port-sel' : rydeplayer.states.gui.ListSelect(self.theme, 'port', {longmynd.inPortEnum.TOP:'Top', longmynd.inPortEnum.BOTTOM:'Bottom'}, config.tuner.port, config.tuner.setInputPort),
-            'port'     : rydeplayer.states.gui.MenuItem(self.theme, "Input Port", "pol", "freq", "port-sel"),
-#            'autoplay-sel' : rydeplayer.states.gui.ListSelect(self.theme, 'autoplay', {True:'Enabled', False:'Disabled'}, config.debug.autoplay, config.setAutoplay),
-#            'autoplay' : rydeplayer.states.gui.MenuItem(self.theme, "Autoplay", "port", "vlcplay", "autoplay-sel"),
+            'band-sel'  : rydeplayer.states.gui.ListSelect(self.theme, 'band', config.bands, config.tuner.getBand, config.tuner.setBand),
+            'band'      : rydeplayer.states.gui.MenuItem(self.theme, "Band", "sr", "preset", "band-sel"),
+            'preset-sel'  : rydeplayer.states.gui.ListSelect(self.theme, 'preset', config.presets, lambda:config.tuner, config.tuner.setConfigToMatch),
+            'preset'      : rydeplayer.states.gui.MenuItem(self.theme, "Presets", "band", "power", "preset-sel"),
+            'power-sel'  : SubMenuPower(self.theme, 'power', self.shutdown),
+            'power'      : rydeplayer.states.gui.MenuItem(self.theme, "Power", "preset", "freq", "power-sel"),
         }
 
         firstkey = 'freq'
-        lastkey = 'port'
-        for key in debugFunctions:
-            menukey = key.strip().replace(" ", "").lower()
-            mainMenuStates[menukey] = rydeplayer.states.gui.MenuItemFunction(self.theme, key, lastkey, firstkey, debugFunctions[key])
-            mainMenuStates[lastkey].down = menukey
-            mainMenuStates[firstkey].up = menukey
-            lastkey = menukey
+        lastkey = 'power'
+        
+        if config.debug.enableMenu:
+            # generate debug menu states
+            debugMenuStates = {}
+            debugPrevState = None
+            debugFirstState = None
+            for key in debugFunctions:
+                menukey = key.strip().replace(" ", "").lower()
+                if debugFirstState is None:
+                    debugFirstState = menukey
+                    debugPrevState = menukey
+                debugMenuStates[menukey] = rydeplayer.states.gui.SubMenuItemFunction(self.theme, key, debugPrevState, debugFirstState, debugFunctions[key])
+                debugMenuStates[debugPrevState].down = menukey
+                debugMenuStates[debugFirstState].up = menukey
+                debugPrevState = menukey
+            mainMenuStates['debug-sel'] = rydeplayer.states.gui.SubMenuGeneric(self.theme, 'debug', debugMenuStates, debugFirstState)
+            mainMenuStates['debug'] = rydeplayer.states.gui.MenuItem(self.theme, "Debug", lastkey, firstkey, "debug-sel")
+            mainMenuStates[lastkey].down = 'debug'
+            mainMenuStates[firstkey].up = 'debug'
+            lastkey = 'debug'
 
         self.state_dict = {
             'menu': rydeplayer.states.gui.Menu(self.theme, 'home', mainMenuStates, "freq"),
@@ -100,12 +134,16 @@ class guiState(rydeplayer.states.gui.SuperStates):
         self.state_name = "home"
         self.state = self.state_dict[self.state_name]
         self.state.startup()
+
+    def shutdown(self, shutdownState):
+        self.shutdownState = shutdownState
+        self.state.cleanup()
+        self.done = True
+
     def get_event(self, event):
-        if(event == rydeplayer.common.navEvent.POWER):
-            self.state.cleanup()
-            self.done = True
-        else:
-            self.state.get_event(event)
+        if not self.state.get_event(event):
+            if event == rydeplayer.common.navEvent.POWER:
+                self.setStateStack([self.shutdownBehaviorDefault,'power-sel','menu'])
 
 # GUI state for when the menu isnt showing
 class Home(rydeplayer.states.gui.States):
@@ -138,11 +176,14 @@ class rydeConfig(object):
         self.bands = {}
         defaultBand = longmynd.tunerBand()
         self.bands[defaultBand] = "None"
+        self.presets = {}
+        self.shutdownBehavior = rydeplayer.common.shutdownBehavior.APPSTOP
         self.debug = type('debugConfig', (object,), {
+            'enableMenu': False,
             'autoplay': True,
             'disableHardwareCodec': True,
             })
-        self.configRev = 1
+        self.configRev = 2
     #setter for default values
     def setAutoplay(self, newval):
         self.debug.autoplay = newval
@@ -174,11 +215,13 @@ class rydeConfig(object):
                             if bandObject in exsistingBands:
                                 bandObject = exsistingBands[exsistingBands.index(bandObject)]
                             newBands[bandObject] = str(bandName)
+                        else:
+                            perfectConfig = False
                     if len(newBands) > 1:
                         self.bands = newBands
                     else:
                         print("No valid bands, skipping")
-
+                        perfectConfig = False
                 else:
                     print("Invalid band library")
                     perfectConfig = False
@@ -213,24 +256,79 @@ class rydeConfig(object):
                 else:
                     print("Invalid longmynd config")
                     perfectConfig = False
+            # parse presets
+            if 'presets' in config:
+                if isinstance(config['presets'], dict):
+                    newPresets = {}
+                    exsistingPresets = list(self.presets.keys())
+                    for presetName in config['presets']:
+                        presetDict = config['presets'][presetName]
+                        presetObject = longmynd.tunerConfig()
+                        if presetObject.loadConfig(presetDict):
+                            # dedupe preset object with exsisting library
+                            if presetObject in exsistingPresets:
+                                presetObject = exsistingPresets[exsistingPresets.index(presetObject)]
+                            newPresets[presetObject] = str(presetName)
+                        else:
+                            perfectConfig = False
+                    if len(newPresets) > 1:
+                        self.presets = newPresets
+                    else:
+                        print("No valid presets, skipping")
+                        perfectConfig = False
+                else:
+                    print("Invalid preset library")
+                    perfectConfig = False
             # pass default tuner config to be parsed by longmynd module
             if 'default' in config:
-                perfectConfig = perfectConfig and self.tuner.loadConfig(config['default'], list(self.bands.keys()))
+                defaultPreset = longmynd.tunerConfig()
+                if defaultPreset.loadConfig(config['default']):
+                    # dedupe preset object with exsisting library
+                    exsistingPresets = list(self.presets.keys())
+                    if defaultPreset in exsistingPresets:
+                        defaultPreset = exsistingPresets[exsistingPresets.index(defaultPreset)]
+                    self.tuner.setConfigToMatch(defaultPreset)
+                else:
+                    perfectConfig = False
+
             # pass ir config to be parsed by the ir config container
             if 'ir' in config:
                 perfectConfig = perfectConfig and self.ir.loadConfig(config['ir'])
             # pass the gpio config to be parsed by the gpio config container
             if 'gpio' in config:
                 perfectConfig = perfectConfig and self.gpio.loadConfig(config['gpio'])
+            # parse shutdown default shutdown event behavior
+            if 'shutdownBehavior' in config:
+                if isinstance(config['shutdownBehavior'], str):
+                    validShutBehav = False
+                    for shutBehavOpt in rydeplayer.common.shutdownBehavior:
+                        if shutBehavOpt.name == config['shutdownBehavior'].upper():
+                            self.shutdownBehavior = shutBehavOpt
+                            validShutBehav = True
+                            break
+                    if not validShutBehav:
+                        print("Shutdown behavior default invalid, skipping")
+                        perfectConfig = False
+                else:
+                    print("Shutdown behavior default invalid, skipping")
+                    perfectConfig = False
+
             # parse debug options
             if 'debug' in config:
                 if isinstance(config['debug'], dict):
+                    if 'enableMenu' in config['debug']:
+                        if isinstance(config['debug']['enableMenu'], bool):
+                            self.debug.enableMenu = config['debug']['enableMenu']
+                        else:
+                            print("Invalid debug menu config, skipping")
+                            perfectConfig = False
                     if 'autoplay' in config['debug']:
                         if isinstance(config['debug']['autoplay'], bool):
                             self.debug.autoplay = config['debug']['autoplay']
                         else:
                             print("Invalid debug autoplay config, skipping")
                             perfectConfig = False
+                    if 'disableHardwareCodec' in config['debug']:
                         if isinstance(config['debug']['disableHardwareCodec'], bool):
                             self.debug.disableHardwareCodec = config['debug']['disableHardwareCodec']
                         else:
@@ -279,7 +377,7 @@ class player(object):
         self.vlcStartup()
 
         # start ui
-        self.app = guiState(self.theme)
+        self.app = guiState(self.theme, self.config.shutdownBehavior)
         self.app.startup(self.config, {'Restart LongMynd':self.lmMan.restart, 'Force VLC':self.vlcStop, 'Abort VLC': self.vlcAbort})
 
         # setup ir
@@ -305,6 +403,16 @@ class player(object):
                 self.updateState()
                 if quit:
                     break
+        self.shutdown(self.app.shutdownState)
+
+    def shutdown(self, behaviour):
+        del(self.playbackState)
+        if behaviour is rydeplayer.common.shutdownBehavior.APPREST:
+            os.execv(sys.executable, ['python3', '-m', 'rydeplayer'] + sys.argv[1:])
+        elif behaviour is rydeplayer.common.shutdownBehavior.SYSSTOP:
+            os.system("sudo shutdown -h now")
+        elif behaviour is rydeplayer.common.shutdownBehavior.SYSREST:
+            os.system("sudo shutdown -r now")
 
     def handleEvent(self, fd):
         quit = False
