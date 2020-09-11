@@ -49,7 +49,9 @@ A complete sample YAML config file is provided as `config.sample.yaml`, this con
   * ```repeatDelay``` The time between repeats once repeating has begun in ms.
   * ```rxGood``` The BCM pin number to output the reciver locked indication to. For example to output the signal on pin 7 set this to 4.
   * ```buttons``` A map of button names to BCM pin numbers.
+* ```shutdownBehavior``` The default shutdown option when the power button is double pressed. Choose from ```APPSTOP``` or ```APPREST``` to stop the player or restart the player respectively.
 * ```debug``` Debug options, for advanced users, do not rely on these, they may go away without notice
+  * ```enableMenu``` Enable the debug menu entry
   * ```autoplay``` Auto play the stream on lock, should be set to True.
   * ```disableHardwareCodec``` Disable hardware decoder in VLC, recommend setting to True, uses more CPU but is more reliable at decoding.
 

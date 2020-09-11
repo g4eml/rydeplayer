@@ -47,6 +47,12 @@ class navEvent(enum.Enum):
     def numericValue(self):
         return self.numericVal
 
+class shutdownBehavior(enum.Enum):
+    APPSTOP = enum.auto()
+    APPREST = enum.auto()
+    SYSSTOP = enum.auto()
+    SYSREST = enum.auto()
+
 class validTracker(object):
     def __init__(self, initValid):
         self.valid = initValid
