@@ -673,12 +673,6 @@ class lmManager(object):
                     # some errors are't critical while lna are initalising, might just be an old NIM
                     if(self.lnaIniting and newline.startswith("ERROR: i2c read reg8")):
                         self.lnaErrorCount += 1
-                    elif(newline.startswith("ERROR: tuner wait on lock timed out")):
-                        stop = False
-                    elif(newline.startswith("ERROR: Tuner set freq")):
-                        stop = False
-                    elif(newline.startswith("ERROR: Failed to init Tuner")):
-                        stop = False
                     elif(not (self.lnaIniting and newline.startswith("ERROR: lna read"))):
                         stop = True
                 if(newline.lstrip().startswith("Flow:")):
