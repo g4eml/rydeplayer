@@ -359,17 +359,21 @@ class numericDisplay(generic):
 # module that displays the current frequency
 class freq(numericDisplay):
     def __init__ (self, theme, drawCallback, rect):
-        super().__init__(theme, drawCallback, rect, "kHz")
+        super().__init__(theme, drawCallback, rect, " MHz")
 
     def updateVal(self, newval):
         self.value = newval.getFreq()
+        if(self.value is not None):
+            self.value = self.value/1000
         self.redraw()
 
 # module that displays the current symbol rate
 class sr(numericDisplay):
     def __init__ (self, theme, drawCallback, rect):
-        super().__init__(theme, drawCallback, rect, "kS")
+        super().__init__(theme, drawCallback, rect, " kS")
 
     def updateVal(self, newval):
         self.value = newval.getSR()
+        if(self.value is not None):
+            self.value = int(self.value)+1
         self.redraw()
