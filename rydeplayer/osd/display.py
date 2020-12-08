@@ -216,9 +216,9 @@ class Controller(object):
         self.longmyndStatus.addOnChangeCallback(self.modules[AvailableModules.PROGRAM].updateVal)
         self.tunerConfig.addCallbackFunction(self._updatePresetName)
         self._updatePresetName(self.tunerConfig)
-        self.modules[AvailableModules.FREQ]=rydeplayer.osd.modules.freq(self.theme, self.draw, theme.relativeRect(rydeplayer.common.datumCornerEnum.BR, 0.02, 0.02, 0.3, 0.05))
+        self.modules[AvailableModules.FREQ]=rydeplayer.osd.modules.freq(self.theme, self.draw, theme.relativeRect(rydeplayer.common.datumCornerEnum.BR, 0.03, 0.03, 0.3, 0.05))
         self.longmyndStatus.addOnChangeCallback(self.modules[AvailableModules.FREQ].updateVal)
-        self.modules[AvailableModules.SR]=rydeplayer.osd.modules.sr(self.theme, self.draw, theme.relativeRect(rydeplayer.common.datumCornerEnum.BR, 0.02, 0.07, 0.3, 0.05))
+        self.modules[AvailableModules.SR]=rydeplayer.osd.modules.sr(self.theme, self.draw, theme.relativeRect(rydeplayer.common.datumCornerEnum.BR, 0.03, 0.08, 0.3, 0.05))
         self.longmyndStatus.addOnChangeCallback(self.modules[AvailableModules.SR].updateVal)
         # Initalise groups
         self.activeGroup = Group(self.theme, self)
