@@ -41,11 +41,11 @@ class irHandset(object):
         if isinstance(self.buttons, dict):
             codesremaining = list(self.buttons.keys())
             for thisNavEvent in rydeplayer.common.navEvent:
-                if thisNavEvent.name in self.buttons:
-                    ircode = self.buttons[thisNavEvent.name]
+                if thisNavEvent.rawName in self.buttons:
+                    ircode = self.buttons[thisNavEvent.rawName]
                     if(isinstance(ircode, int)):
                         codemap[ircode]=thisNavEvent
-                        codesremaining.remove(thisNavEvent.name)
+                        codesremaining.remove(thisNavEvent.rawName)
                     else:
                         print("Bad IR code: "+str(ircode))
             if len(codesremaining) > 0:
@@ -265,6 +265,7 @@ class irManager(object):
     # handle an fd
     def handleFD(self, fd):
         quit = False
+        eventQueue = []
         for event in self.inputFdMap[fd]['device'].read():
             eventtime = time.monotonic() # what time is it? for as a consistent datum for repeats
             if(event.type == 4):
@@ -274,7 +275,7 @@ class irManager(object):
                     # first keypress of a potential sequence
                     mappedEvent = self.mapIrEvent(event.value)
                     if(mappedEvent != None):
-                        quit=self.eventCallback(mappedEvent)
+                        eventQueue.append(mappedEvent)
                     # start repeat seqence
                     self.lasttime = eventtime
                     self.repeatcount = 0
@@ -283,10 +284,12 @@ class irManager(object):
                     # repeating last keypress
                     mappedEvent = self.mapIrEvent(event.value)
                     if(mappedEvent != None):
-                        quit=self.eventCallback(mappedEvent)
+                        eventQueue.append(mappedEvent)
                     self.lasttime = eventtime
                     self.repeatcount += 1
                     self.lastcode = event.value
+        for event in eventQueue:
+            quit=self.eventCallback(event)
             if quit:
                 break
         return quit
