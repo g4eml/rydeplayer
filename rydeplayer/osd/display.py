@@ -25,6 +25,8 @@ class AvailableModules(enum.Enum):
     MER = enum.auto()
     REPORT = enum.auto()
     PROGRAM = enum.auto()
+    FREQ = enum.auto()
+    SR = enum.auto()
 
 # Enum containing configurable timer lengths
 class TimerLength(enum.Enum):
@@ -204,16 +206,20 @@ class Controller(object):
         self.surface = pygame.image.frombuffer(self.dispmanxlayer, self.dispmanxlayer.size, 'RGBA')
         # Initialise modules
         self.modules = dict()
-        self.modules[AvailableModules.MUTE]=rydeplayer.osd.modules.mute(self.theme, self.draw, theme.relativeRect(rydeplayer.common.datumCornerEnum.TR, 0.02, 0.02, 0.1, 0.1))
+        self.modules[AvailableModules.MUTE]=rydeplayer.osd.modules.mute(self.theme, self.draw, theme.relativeRect(rydeplayer.common.datumCornerEnum.TR, 0.03, 0.03, 0.1, 0.1))
         self.player.addMuteCallback(self.modules[AvailableModules.MUTE].updateVal)
-        self.modules[AvailableModules.MER]=rydeplayer.osd.modules.mer(self.theme, self.draw, theme.relativeRect(rydeplayer.common.datumCornerEnum.TR, 0.02, 0.14, 0.2, 0.15))
+        self.modules[AvailableModules.MER]=rydeplayer.osd.modules.mer(self.theme, self.draw, theme.relativeRect(rydeplayer.common.datumCornerEnum.TR, 0.03, 0.15, 0.2, 0.15))
         self.longmyndStatus.addOnChangeCallback(self.modules[AvailableModules.MER].updateVal)
-        self.modules[AvailableModules.REPORT]=rydeplayer.osd.modules.report(self.theme, self.draw, theme.relativeRect(rydeplayer.common.datumCornerEnum.TR, 0.02, 0.31, 0.2, 0.15))
+        self.modules[AvailableModules.REPORT]=rydeplayer.osd.modules.report(self.theme, self.draw, theme.relativeRect(rydeplayer.common.datumCornerEnum.TR, 0.03, 0.32, 0.2, 0.15))
         self.longmyndStatus.addOnChangeCallback(self.modules[AvailableModules.REPORT].updateVal)
-        self.modules[AvailableModules.PROGRAM]=rydeplayer.osd.modules.program(self.theme, self.draw, theme.relativeRect(rydeplayer.common.datumCornerEnum.BC, 0, 0.02, 0.75, 0.2))
+        self.modules[AvailableModules.PROGRAM]=rydeplayer.osd.modules.program(self.theme, self.draw, theme.relativeRect(rydeplayer.common.datumCornerEnum.BC, 0, 0.03, 0.73, 0.2))
         self.longmyndStatus.addOnChangeCallback(self.modules[AvailableModules.PROGRAM].updateVal)
         self.tunerConfig.addCallbackFunction(self._updatePresetName)
         self._updatePresetName(self.tunerConfig)
+        self.modules[AvailableModules.FREQ]=rydeplayer.osd.modules.freq(self.theme, self.draw, theme.relativeRect(rydeplayer.common.datumCornerEnum.BR, 0.03, 0.03, 0.25, 0.04))
+        self.longmyndStatus.addOnChangeCallback(self.modules[AvailableModules.FREQ].updateVal)
+        self.modules[AvailableModules.SR]=rydeplayer.osd.modules.sr(self.theme, self.draw, theme.relativeRect(rydeplayer.common.datumCornerEnum.BR, 0.03, 0.07, 0.25, 0.04))
+        self.longmyndStatus.addOnChangeCallback(self.modules[AvailableModules.SR].updateVal)
         # Initalise groups
         self.activeGroup = Group(self.theme, self)
         self.activeGroup.setModules(config.getActiveGroup())
@@ -250,7 +256,7 @@ class Controller(object):
                 if modulerect.collidelist(boxes) >= 0:
                     modulesurface = module.getSurface()
                     for box in boxes:
-                        blitPairs.append((modulesurface, modulerect.clip(box)))
+                        blitPairs.append((modulesurface, modulerect))# , modulerect.clip(box))) do it the slow way, pending pygame fix
         self.surface.blits(blitPairs)
         # Allow defering final update if multiple modules as being updated
         if not deferRedraw:

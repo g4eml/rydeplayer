@@ -248,6 +248,10 @@ class guiState(rydeplayer.states.gui.SuperStates):
                 self.osd.toggle(2)
             elif(event == rydeplayer.common.navEvent.MUTE):
                 self.player.toggleMute()
+            elif(event == rydeplayer.common.navEvent.CHANU):
+                self.player.switchPresetRelative(-1)
+            elif(event == rydeplayer.common.navEvent.CHAND):
+                self.player.switchPresetRelative(1)
 
 
 # GUI state for when the menu isnt showing
@@ -487,7 +491,7 @@ class player(object):
         self.muteCallbacks = []
 
         # setup longmynd
-        self.lmMan = longmynd.lmManager(self.config.tuner, self.config.longmynd.binpath, self.config.longmynd.mediapath, self.config.longmynd.statuspath, self.config.longmynd.tstimeout)
+        self.lmMan = longmynd.lmManagerThread(self.config.tuner, self.config.longmynd.binpath, self.config.longmynd.mediapath, self.config.longmynd.statuspath, self.config.longmynd.tstimeout)
         self.config.tuner.addCallbackFunction(self.lmMan.reconfig)
 
         self.vlcStartup()
@@ -546,9 +550,25 @@ class player(object):
         else:
             return ""
 
+    def switchPresetRelative(self, offset):
+        presetkeys = list(self.config.presets.keys())
+        if len(presetkeys) > 0:
+            newindex = None
+            if self.config.tuner in presetkeys:
+                newindex = (presetkeys.index(self.config.tuner) + offset)%len(presetkeys)
+            else:
+                if offset > 0:
+                    newindex = 0
+                elif offset < 0:
+                    newindex = len(presetkeys)-1
+            if newindex is not None:
+                self.config.tuner.setConfigToMatch(presetkeys[newindex])
+                self.osd.activate(3, rydeplayer.osd.display.TimerLength.USERTRIGGER)
+
     def shutdown(self, behaviour):
         del(self.osd)
         del(self.playbackState)
+        self.lmMan.shutdown()
         if behaviour is rydeplayer.common.shutdownBehavior.APPREST:
             os.execv(sys.executable, ['python3', '-m', 'rydeplayer'] + sys.argv[1:])
         elif behaviour is rydeplayer.common.shutdownBehavior.SYSSTOP:
@@ -571,10 +591,11 @@ class player(object):
 
     def updateState(self):
         # update playback state
-        if(self.lmMan.isRunning()):
-            if(self.lmMan.isLocked()):
+        state = self.lmMan.getCoreState()
+        if(state.isRunning):
+            if(state.isLocked):
                 self.playbackState.setState(rydeplayer.states.playback.States.LOCKED)
-                newMonoState = self.lmMan.getMonotonicState()
+                newMonoState = state.monotonicState
 
                 if self.monotonicState != newMonoState:
                     self.monotonicState = newMonoState
