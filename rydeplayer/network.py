@@ -55,25 +55,35 @@ class networkConfig(object):
 
 
 class networkManager(object):
-    def __init__(self, config, eventCallback, muteCallback):
+    def __init__(self, config, eventCallback, muteCallback, debugFunctions):
         self.config = config
         self.eventCallback = eventCallback
         self.muteCallback = muteCallback
+        self.debugFunctions = debugFunctions
         self.activeConnections = dict()
         if self.config.network.enabled:
             self.mainSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.mainSock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.mainSock.setblocking(0)
             self.mainSock.bind((self.config.network.bindaddr, self.config.network.port))
             self.mainSock.listen(5)
             self.commands = { # dict of commands and handler functions
-                    "getBands":self.getBands,
-                    "setTune":self.setTune,
-                    "setMute": self.setMute,
-                    "sendEvent":self.sendEvent,
+                    "getBands":  self.getBands,
+                    "setTune":   self.setTune,
+                    "setMute":   self.setMute,
+                    "sendEvent": self.sendEvent,
+                    "debugFire": self.debugFire,
                     }
             self.eventMap = dict()
             for thisEvent in rydeplayer.common.navEvent:
                 self.eventMap[thisEvent.rawName] = thisEvent
+
+    def __del__(self):
+        for sock in list(self.activeConnections.keys()):
+            sock.shutdown(socket.SHUT_RDWR)
+            sock.close()
+        self.mainSock.shutdown(socket.SHUT_RDWR)
+        self.mainSock.close()
 
     def getFDs(self):
         if self.config.network.enabled:
@@ -93,6 +103,7 @@ class networkManager(object):
                 self.activeConnections[fd]+=dataStr
                 if len(self.activeConnections[fd]) > (100*1024): # 100kB command limit
                     del self.activeConnections[fd]
+                    fd.shutdown(socket.SHUT_RDWR)
                     fd.close()
                     print("Network command too long, chopping")
                 try:
@@ -103,6 +114,7 @@ class networkManager(object):
                 fd.send(bytes(json.dumps(result),encoding="utf-8"))
             else:
                 del self.activeConnections[fd]
+                fd.shutdown(socket.SHUT_RDWR)
                 fd.close()
         return stop
 
@@ -175,3 +187,16 @@ class networkManager(object):
         thisEvent = self.eventMap[command['event']]
         stop = self.eventCallback(thisEvent)
         return (result, stop)
+
+    def debugFire(self, command):
+        result = {'success':True}
+        if 'function' not in command:
+            result['success'] = False
+            result['error'] = "No function provided"
+            return (result, False)
+        if command['function'] not in self.debugFunctions:
+            result['success'] = False
+            result['error'] = "Invalid function name provided"
+            return (result, False)
+        self.debugFunctions[command['function']]()
+        return (result, False)
