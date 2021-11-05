@@ -301,9 +301,11 @@ class guiState(rydeplayer.states.gui.SuperStates):
                 self.player.toggleMute()
             elif(event == rydeplayer.common.navEvent.VOLU):
                 self.player.adjustVolumeByStep(True)
+                self.player.setMute(False)
                 self.osd.activate(3, rydeplayer.osd.display.TimerLength.USERTRIGGER)
             elif(event == rydeplayer.common.navEvent.VOLD):
                 self.player.adjustVolumeByStep(False)
+                self.player.setMute(False)
                 self.osd.activate(3, rydeplayer.osd.display.TimerLength.USERTRIGGER)
             elif(event == rydeplayer.common.navEvent.CHANU):
                 self.player.switchPresetRelative(-1)
@@ -593,7 +595,8 @@ class player(object):
         self.irMan = ir.irManager(self.stepSM, self.config.ir)
 
         # setup gpio
-        self.gpioMan = rydeplayer.gpio.gpioManager(self.stepSM, self.config.gpio)
+        self.gpioMan = rydeplayer.gpio.gpioManager(self.stepSM, self.config.gpio, self.config.tuner)
+        self.config.tuner.addCallbackFunction(self.gpioMan.setBandOutFromPreset)
 
         # start source
         self.sourceMan.start()
@@ -740,6 +743,7 @@ class player(object):
 #               print("parsed:"+str(vlcMedia.is_parsed()))
             self.gpioMan.setRXgood(False)
         self.vlcPlayer.audio_set_mute(self.mute)
+        self.vlcPlayer.audio_set_volume(self.volume)
         print(self.vlcPlayer.get_state())
 
     # Step the state machine with a navEvent
