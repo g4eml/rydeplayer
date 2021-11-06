@@ -59,6 +59,7 @@ A complete sample YAML config file is provided as `config.sample.yaml`, this con
   * ```switches``` Container for switch event to BCM pin number mappings.
     * ```highgoing``` A map of high going events to BCM pin numbers.
     * ```lowgoing``` A map of low going events to BCM pin numbers.
+  * ```band``` A list of BCM pin numbers to use to output band ID, starting with LSB
 * ```osd``` This section contains the configuration for the on screen display
   * ```timers``` Contains deactiate timers for various triggers in seconds, ```0``` disables the initial event, ```null``` disables the auto deactivate
     * ```USERTRIGGER``` Activate triggered by user pressing select button
@@ -78,6 +79,10 @@ A complete sample YAML config file is provided as `config.sample.yaml`, this con
   * ```bindaddr``` The address of the local network interface use or '' to use all interfaces
   * ```port```  The TCP port number to use
 * ```shutdownBehavior``` The default shutdown option when the power button is double pressed. Choose from ```APPSTOP``` or ```APPREST``` to stop the player or restart the player respectively.
+* ```audio``` This section contains audio configuration options
+  * ```muteOnStartup``` Set the default mute status to use when starting the player
+  * ```volumeOnStartup``` Set the default volume level to use when starting the player in %
+  * ```volumeStep``` Set the step size to use when adjusting the volume level in %
 * ```debug``` Debug options, for advanced users, do not rely on these, they may go away without notice
   * ```enableMenu``` Enable the debug menu entry
   * ```autoplay``` Auto play the stream on lock, should be set to True.
