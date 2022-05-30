@@ -1,5 +1,5 @@
 #    Ryde Player provides a on screen interface and video player for Longmynd compatible tuners.
-#    Copyright © 2021 Tim Clark
+#    Copyright © 2022 Tim Clark
 #
 #    This program is free software: you can redistribute it and/or modify
 #    it under the terms of the GNU General Public License as published by
@@ -14,14 +14,16 @@
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import pygame, vlc, select, pydispmanx, yaml, os, pkg_resources, argparse, importlib, functools, sys
+import pygame, vlc, select, pydispmanx, yaml, os, pkg_resources, argparse, importlib, functools, sys, socket
 import rydeplayer.sources.common
 import rydeplayer.sources.longmynd
 import rydeplayer.sources.combituner
+import rydeplayer.sources.rtmpstream
 from . import ir
 import rydeplayer.gpio
 import rydeplayer.network
 import rydeplayer.common
+import rydeplayer.watchdog
 import rydeplayer.states.gui
 import rydeplayer.states.playback
 import rydeplayer.osd.display
@@ -47,10 +49,13 @@ class Theme(object):
         self.menuHeight = self.displayHeight
         playStateTitleFontSize=self.fontSysSizeOptimize('Not Loaded', displaySize[0]/2, 'freesans')
         menuH1FontSize=self.fontSysSizeOptimize('BATC Ryde Project', self.menuWidth*0.85, 'freesans')
+        inCharFontSize=self.fontSysSizeOptimize('Err', menuH1FontSize-(self.menuWidth*0.01), 'freesans')
         self.fonts = type('fonts', (object,), {
             'menuH1': pygame.font.SysFont('freesans', menuH1FontSize),
             'playStateTitle' :  pygame.font.SysFont('freesans', playStateTitleFontSize),
+            'inCharFont' :  pygame.font.SysFont('freesans', inCharFontSize),
             })
+        self.errCharSurface = pygame.transform.rotate(self.fonts.inCharFont.render("Err", True, self.colours.black), 90)
         self._circlecache = {}
         self.logofile = pkg_resources.resource_stream('rydeplayer.resources', 'logo_menu.png')
         self.muteicon = pkg_resources.resource_stream('rydeplayer.resources', 'icon_mute.png')
@@ -212,6 +217,10 @@ class guiState(rydeplayer.states.gui.SuperStates):
                 mainMenuStates[key+'-sel'] = rydeplayer.states.gui.NumberSelect(self.theme, key, tunerConfigVars[key], config.tuner.runCallbacks)
                 validVar = True
 
+            if isinstance(tunerConfigVars[key], rydeplayer.sources.common.tunerConfigStr):
+                mainMenuStates[key+'-sel'] = rydeplayer.states.gui.StringSelect(self.theme, key, tunerConfigVars[key], config.tuner.runCallbacks)
+                validVar = True
+
             if validVar:
                 if firstkey is None:
                     firstkey = key
@@ -347,6 +356,7 @@ class rydeConfig(object):
         self.presets = {}
         self.osd = rydeplayer.osd.display.Config(theme)
         self.network = rydeplayer.network.networkConfig()
+        self.sourceWatchdog = rydeplayer.watchdog.sourceWatchdogConfig()
         self.shutdownBehavior = rydeplayer.common.shutdownBehavior.APPSTOP
         self.audio = type('audioConfig', (object,), {
             'muteOnStartup': False,
@@ -459,6 +469,9 @@ class rydeConfig(object):
             # pass the network config to be parsed by the network config container
             if 'network' in config:
                 perfectConfig = perfectConfig and self.network.loadConfig(config['network'])
+            # pass the source watchdog config to be parsed by the source watchdog config container
+            if 'watchdog' in config:
+                perfectConfig = perfectConfig and self.sourceWatchdog.loadConfig(config['watchdog'])
             # parse shutdown default shutdown event behavior
             if 'shutdownBehavior' in config:
                 if isinstance(config['shutdownBehavior'], str):
@@ -583,12 +596,15 @@ class player(object):
         self.sourceMan = rydeplayer.sources.common.sourceManagerThread(self.config.tuner, self.config.sourceConfigs)
         self.config.tuner.addCallbackFunction(self.sourceMan.reconfig)
 
+        # setup vlc
+        self.recvVLCEvent, self.sendVLCEvent = socket.socketpair()
         self.vlcStartup()
+        self.config.tuner.addCallbackFunction(self.vlcStopOnRetune)
 
         # setup on screen display
         self.osd = rydeplayer.osd.display.Controller(self.theme, self.config.osd, self.sourceMan.getStatus(), self, self.config.tuner)
 
-        debugFunctions = {'Restart Source':self.sourceMan.restart, 'Force VLC':self.vlcStop, 'Abort VLC': self.vlcAbort}
+        debugFunctions = {'Restart Source':self.sourceReset, 'Force VLC':self.vlcStop, 'Abort VLC': self.vlcAbort }
 
         # start ui
         self.app = guiState(self.theme, self.config.shutdownBehavior, self, self.osd)
@@ -596,6 +612,10 @@ class player(object):
 
         # start network
         self.netMan = rydeplayer.network.networkManager(self.config, self.stepSM, self.setMute, debugFunctions)
+
+        # setup source watchdog
+        self.watchdog = rydeplayer.watchdog.sourceWatchdog(self.config.sourceWatchdog, self.sourceReset)
+        self.config.tuner.addCallbackFunction(self.watchdog.reset)
 
         # setup ir
         self.irMan = ir.irManager(self.stepSM, self.config.ir)
@@ -614,7 +634,7 @@ class player(object):
         # main event loop
         while not quit:
             # need to regen every loop, lm stdout handler changes on lm restart
-            fds = self.irMan.getFDs() + self.sourceMan.getFDs() + self.gpioMan.getFDs() + self.osd.getFDs() + self.netMan.getFDs()
+            fds = self.irMan.getFDs() + self.sourceMan.getFDs() + self.gpioMan.getFDs() + self.osd.getFDs() + self.netMan.getFDs() + self.watchdog.getFDs() + [self.recvVLCEvent]
             r, w, x = select.select(fds, [], [])
             for fd in r:
                 quit = self.handleEvent(fd)
@@ -693,6 +713,7 @@ class player(object):
                 self.osd.activate(3, rydeplayer.osd.display.TimerLength.USERTRIGGER)
 
     def shutdown(self, behaviour):
+        self.vlcStop()
         del(self.osd)
         del(self.playbackState)
         self.sourceMan.shutdown()
@@ -716,38 +737,48 @@ class player(object):
             quit = self.osd.handleFD(fd)
         elif(fd in self.netMan.getFDs()):
             quit = self.netMan.handleFD(fd)
+        elif(fd in self.watchdog.getFDs()):
+            self.watchdog.handleFD(fd)
+        elif(fd == self.recvVLCEvent):
+            self.vlcStopOnEndMain()
         return quit
 
     def updateState(self):
         # update playback state
         state = self.sourceMan.getCoreState()
-        if(state.isRunning):
-            if(state.isLocked):
+        vlcState = self.vlcPlayer.get_state()
+        if state.isRunning:
+            self.watchdog.service()
+            if state.isLocked:
                 self.playbackState.setState(rydeplayer.states.playback.States.LOCKED)
                 newMonoState = state.monotonicState
-
                 if self.monotonicState != newMonoState:
                     self.monotonicState = newMonoState
-                    self.vlcStop()
+                    if (not self.sourceMan.waitForMediaHangup()) or self.vlcMediaFD != self.sourceMan.getMediaFd():
+                        self.vlcStop()
                     print("Param Restart")
                 if self.vlcPlayer.get_state() not in [vlc.State.Playing, vlc.State.Opening] and self.config.debug.autoplay:
                     self.vlcPlay()
                     self.osd.activate(4, rydeplayer.osd.display.TimerLength.PROGRAMTRIGGER)
                 self.gpioMan.setRXgood(True)
             else:
-                self.playbackState.setState(rydeplayer.states.playback.States.NOLOCK)
-                if self.config.debug.autoplay:
+                if self.config.debug.autoplay and not self.sourceMan.waitForMediaHangup():
                     self.vlcStop()
-                self.gpioMan.setRXgood(False)
+                if vlcState != vlc.State.Playing:
+                    self.playbackState.setState(rydeplayer.states.playback.States.NOLOCK)
+                    self.gpioMan.setRXgood(False)
         else:
-            if state.isStarted:
-                self.playbackState.setState(rydeplayer.states.playback.States.SOURCELOAD)
-            else:
-                self.playbackState.setState(rydeplayer.states.playback.States.NOSOURCE)
-            if self.config.debug.autoplay:
+            if vlcState != vlc.State.Playing:
+                if state.isStarted:
+                    self.playbackState.setState(rydeplayer.states.playback.States.SOURCELOAD)
+                    self.watchdog.cancel() # its running, cancel any auto restart
+                else:
+                    self.playbackState.setState(rydeplayer.states.playback.States.NOSOURCE)
+                    self.watchdog.fault()
+                self.gpioMan.setRXgood(False)
+            if self.config.debug.autoplay and not self.sourceMan.waitForMediaHangup():
                 self.vlcStop()
 #               print("parsed:"+str(vlcMedia.is_parsed()))
-            self.gpioMan.setRXgood(False)
         self.vlcPlayer.audio_set_mute(self.mute)
         self.vlcPlayer.audio_set_volume(self.volume)
         print(self.vlcPlayer.get_state())
@@ -763,6 +794,12 @@ class player(object):
 
     # retrigger vlc to play, mostly exsists as its needed as a callback
     def vlcPlay(self):
+        newMediaFD = self.sourceMan.getMediaFd()
+        if newMediaFD != self.vlcMediaFD:
+            self.vlcPlayer.stop()
+            self.vlcMediaFD = newMediaFD
+            del(self.vlcMedia)
+            self.vlcMedia = self.vlcInstance.media_new_fd(self.vlcMediaFD)
         self.vlcPlayer.set_media(self.vlcMedia)
         self.vlcPlayer.play()
     def vlcStop(self):
@@ -792,7 +829,25 @@ class player(object):
         self.vlcInstance = vlc.Instance(vlcArgs)
 
         self.vlcPlayer = self.vlcInstance.media_player_new()
-        self.vlcMedia = self.vlcInstance.media_new_fd(self.sourceMan.getMediaFd().fileno())
+        vlcEvents = self.vlcPlayer.event_manager()
+        vlcEvents.event_attach(vlc.EventType.MediaPlayerEndReached, self.vlcStopOnEndEvent)
+        self.vlcMediaFD = self.sourceMan.getMediaFd()
+        self.vlcMedia = self.vlcInstance.media_new_fd(self.vlcMediaFD)
+
+    def vlcStopOnEndEvent(self, event):
+        self.sendVLCEvent.send(b"\x00")
+
+    def vlcStopOnEndMain(self):
+        self.recvVLCEvent.recv(1)
+        if self.vlcPlayer.get_state() == vlc.State.Ended:
+            self.vlcStop()
+
+    def vlcStopOnRetune(self, newConfig):
+        self.vlcStop()
+
+    def sourceReset(self):
+        self.sourceMan.restart()
+        self.vlcStop()
 
 def run():
     parser = argparse.ArgumentParser()

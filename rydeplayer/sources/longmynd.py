@@ -306,6 +306,31 @@ class tunerStatus(rydeplayer.sources.common.sourceStatus):
         else:
             return False
 
+    def setPIDs(self, newval):
+        codecmap = {
+             2:rydeplayer.sources.common.CodecEnum.MP2,
+             3:rydeplayer.sources.common.CodecEnum.MP3,
+             4:rydeplayer.sources.common.CodecEnum.MP3,
+            15:rydeplayer.sources.common.CodecEnum.AAC,
+            16:rydeplayer.sources.common.CodecEnum.H263,
+            27:rydeplayer.sources.common.CodecEnum.H264,
+            32:rydeplayer.sources.common.CodecEnum.MPA,
+            36:rydeplayer.sources.common.CodecEnum.H265,
+            129:rydeplayer.sources.common.CodecEnum.AC3,
+            }
+        newPIDs = {}
+        for pid, codec in newval.items():
+            if codec in codecmap:
+                newPIDs[pid] = codecmap[codec]
+            else:
+                newPIDs[pid] = str(codec)+"?"
+        if self.pids != newPIDs:
+            self.pids = newPIDs
+            self.onChangeFire()
+            return True
+        else:
+           return False
+
     def getMer(self):
         return self.mer
 
@@ -374,7 +399,7 @@ class lmManager(object):
             os.mkfifo(self.statusFIFOfilename)
         elif(not stat.S_ISFIFO(os.stat(self.statusFIFOfilename).st_mode)):
             print("status pipe is not a fifo")
-        self.vlcMediaFd =os.fdopen( os.open(self.mediaFIFOfilename, flags=os.O_NONBLOCK|os.O_RDONLY)) # an open file descriptor to pass to vlc (or another player)
+        self.vlcMediaFd =os.open(self.mediaFIFOfilename, flags=os.O_NONBLOCK|os.O_RDONLY) # an open file descriptor to pass to vlc (or another player)
 #        self.vlcMediaFd = None
         self.statusFIFOfd = os.fdopen(os.open(self.statusFIFOfilename, flags=os.O_NONBLOCK|os.O_RDONLY), encoding="utf-8", errors="replace") # the status fifo file descriptor
         rpipe, self.stdoutWritefd = pty.openpty() # a pty for interacting with longmynds STDOUT, couldn't get pipes to work
@@ -411,9 +436,11 @@ class lmManager(object):
             self.activeConfig = config.copyConfig()
             print(self.activeConfig)
             self.restart()
+    def waitForMediaHangup(self):
+        return False
     def remedia(self):
-        self.vlcMediaFd.close()
-        self.vlcMediaFd =os.fdopen( os.open(self.mediaFIFOfilename, flags=os.O_NONBLOCK, mode=os.O_RDONLY)) # an open file descriptor to pass to vlc (or another player)
+        os.close(self.vlcMediaFd)
+        self.vlcMediaFd = os.open(self.mediaFIFOfilename, flags=os.O_NONBLOCK, mode=os.O_RDONLY) # an open file descriptor to pass to vlc (or another player)
     def getMediaFd(self):
         return self.vlcMediaFd
     def getFDs(self):
@@ -699,7 +726,7 @@ class lmManager(object):
             self.lmlog.append(newline)
         self.stdoutReadfd.close()
         self.statusFIFOfd.close()
-        self.vlcMediaFd.close()
+        os.close(self.vlcMediaFd)
 
     def _fetchFtdiDevices(self):
         pyftdi.usbtools.UsbTools.flush_cache()
@@ -810,7 +837,7 @@ class config(object):
             perfectConfig = False
         return perfectConfig
 
-class band(rydeplayer.sources.common.tunerBand):
+class band(rydeplayer.sources.common.tunerBandRF):
     def __init__(self):
         self.source = rydeplayer.sources.common.sources.LONGMYND
         self.pol = PolarityEnum.NONE
@@ -830,8 +857,8 @@ class band(rydeplayer.sources.common.tunerBand):
     @classmethod
     def loadBand(cls, config):
         perfectConfig = True
-        # create a new instance of this class
-        self = cls()
+        subClassSuccess, self = super(band, cls).loadBand(config)
+        perfectConfig = perfectConfig and subClassSuccess
         if 'pol' in config:
             if isinstance(config['pol'], str):
                 polset = False
