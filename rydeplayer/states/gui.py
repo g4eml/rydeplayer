@@ -249,7 +249,7 @@ class SubMenuGeneric(SuperStatesSurface):
         # align the menu items and sub items
         self.state = self.state_dict[self.state_name]
         for menuState in self.state_dict.values():
-            if(isinstance(menuState, NumberSelect)):
+            if(isinstance(menuState, CharSeqSelect)):
                 menuState.top = drawnext+self.top
                 menuState.left = itemleft
             elif(isinstance(menuState, ListSelect)):
@@ -264,7 +264,7 @@ class SubMenuGeneric(SuperStatesSurface):
 
     def getSurfaceRects(self):
         # if its a sub menu return the rectangles for it to the p:arent for painting
-        if(isinstance(self.state, ListSelect) or isinstance(self.state, NumberSelect) or  isinstance(self.state, SubMenuGeneric)):
+        if(isinstance(self.state, ListSelect) or isinstance(self.state, CharSeqSelect) or  isinstance(self.state, SubMenuGeneric)):
             rectlist = [self.surfacerect]
             rectlist.extend(self.state.getSurfaceRects())
             return rectlist
@@ -273,7 +273,7 @@ class SubMenuGeneric(SuperStatesSurface):
 
     def getBlitPairs(self):
         # if its a sub menu return the surfaces directly to the parent for bliting
-        if(isinstance(self.state, ListSelect) or isinstance(self.state, NumberSelect) or  isinstance(self.state, SubMenuGeneric)):
+        if(isinstance(self.state, ListSelect) or isinstance(self.state, CharSeqSelect) or  isinstance(self.state, SubMenuGeneric)):
             pairlist = [(self.surface, self.surfacerect)]
             pairlist.extend(self.state.getBlitPairs())
             return pairlist
@@ -282,7 +282,7 @@ class SubMenuGeneric(SuperStatesSurface):
 
     def redrawState(self, state, rects):
         # if its not a sub menu draw it onto the local surface
-        if not (isinstance(self.state, ListSelect) or isinstance(self.state, NumberSelect) or isinstance(self.state, SubMenuGeneric)):
+        if not (isinstance(self.state, ListSelect) or isinstance(self.state, CharSeqSelect) or isinstance(self.state, SubMenuGeneric)):
             super().redrawState(state, rects)
 
     def get_event(self, event):
@@ -476,26 +476,30 @@ class ListSelect(SuperStatesSurface):
                 return True
         return False
 
-# single digit selector for a larger number
-class DigitSelect(StatesSurface):
-    def __init__(self, theme, left, right, currentValue, maxValue, minValue, errorHighlight):
+# single character selector for a larger string
+class CharacterSelect(StatesSurface):
+    def __init__(self, theme, left, right, currentValue, chars, directEventMapFunc, errorHighlight):
         super().__init__(theme)
         self.active = False
         self.next = None
         self.done = False
-        self.minValue = minValue
-        self.maxValue = maxValue
         self.right = right
         self.left = left
-        # what is the largest digit in this font, make the box that big
-        boxheight = self.theme.fonts.menuH1.size("0123456789")[1] + self.theme.menuHeight*0.01
+        self.chardict = chars
+        self.charlist = list(chars.keys())
+        self.directEventMapFunc = directEventMapFunc
+        # what is the largest char in this font, make the box that big
+        boxheight = self.theme.fonts.menuH1.size("".join(chars.values()))[1] + self.theme.menuHeight*0.01
         maxdigitwidth = 0
-        for n in range(minValue, maxValue+1):
-            maxdigitwidth = max(maxdigitwidth,self.theme.fonts.menuH1.size(str(n))[0])
+        for n in self.chardict:
+            maxdigitwidth = max(maxdigitwidth,self.theme.fonts.menuH1.size(self.chardict[n])[0])
         boxwidth = maxdigitwidth + self.theme.menuWidth*0.02
         # actual drawing
         self.surface = pygame.Surface((boxwidth, boxheight), pygame.SRCALPHA)
-        self.textSurface = self.theme.fonts.menuH1.render(str(currentValue), True, self.theme.colours.black)
+        if currentValue in self.chardict:
+            self.textSurface = self.theme.fonts.menuH1.render(self.chardict[currentValue], True, self.theme.colours.black)
+        else:
+            self.textSurface = self.theme.errCharSurface.copy()
         self.surface.fill(self.theme.colours.transparent)
         self.textrect = self.textSurface.get_rect()
         self.textrect.centery = self.surface.get_height()/2
@@ -514,40 +518,42 @@ class DigitSelect(StatesSurface):
         self.drawDigit()
         self.active = True
     def get_event(self, event):
-        if( event == navEvent.UP):
-            if(self.currentValue >= self.maxValue):
-                self.currentValue = self.minValue
+        if event == navEvent.UP:
+            if self.currentValue == self.charlist[-1] or self.currentValue is None:
+                self.currentValue = self.charlist[0]
             else:
-                self.currentValue += 1 
+                self.currentValue = self.charlist[self.charlist.index((self.currentValue))+1]
             return True
-        elif( event == navEvent.DOWN):
-            if(self.currentValue <= self.minValue):
-                self.currentValue = self.maxValue
+        elif event == navEvent.DOWN:
+            if self.currentValue == self.charlist[0] or self.currentValue is None:
+                self.currentValue = self.charlist[-1]
             else:
-                self.currentValue -= 1 
+                self.currentValue = self.charlist[self.charlist.index((self.currentValue))-1]
             return True
-        elif( event == navEvent.LEFT):
+        elif event == navEvent.LEFT:
             if(self.left != None):
                 self.next=self.left
                 self.done=True
                 return True
-        elif( event == navEvent.RIGHT):
-            if(self.right != None):
+        elif event == navEvent.RIGHT:
+            if self.right != None:
                 self.next=self.right
                 self.done=True
                 return True
-        elif( event.isNumeric() ):
-            # handle direct digit input
-            intevent = event.numericValue
-            if(intevent < self.minValue or intevent > self.maxValue):
+        else:
+            # handle direct char input
+            canHandle, newVal = self.directEventMapFunc(event)
+            if canHandle and newVal not in self.charlist:
                 return True
-            else:
-                self.currentValue = intevent
+            elif canHandle:
+                self.currentValue = newVal
                 self.drawDigit()
                 if(self.right != None):
                     self.next=self.right
                     self.done=True
                 return True
+            else:
+                return False
         return False
     def setValue(self, newValue):
         self.currentValue = newValue
@@ -563,7 +569,10 @@ class DigitSelect(StatesSurface):
         textColour = self.theme.colours.black
         if self.errorHighlight:
             textColour = self.theme.colours.textError
-        self.textSurface = self.theme.fonts.menuH1.render(str(self.currentValue), True, textColour)
+        if self.currentValue in self.chardict:
+            self.textSurface = self.theme.fonts.menuH1.render(self.chardict[self.currentValue], True, self.theme.colours.black)
+        else:
+            self.textSurface = self.theme.errCharSurface.copy()
         if self.active:
             self.surface.fill(self.theme.colours.transpBack)
         else:
@@ -576,108 +585,179 @@ class DigitSelect(StatesSurface):
         super().update()
         self.drawDigit()
 
-# sub menu for inputing whole numbers and pass new value to callback when done
-class NumberSelect(SuperStatesSurface):
+# sub menu for inputing generic character sequences and pass new value to callback when done
+class CharSeqSelect(SuperStatesSurface):
     def __init__(self, theme, backState, valueConfig, updateCallback):
         super().__init__(theme)
-        # where to go back to
-        self.next = backState
         self.valueConfig = valueConfig
-        # how many digits do we need to allow the max number to be put in
-        self.digitCount = len(str(max(self.valueConfig.getMaxValue(), self.valueConfig.getValue())))
+        # where to go back to
+        self.suffix = ""
+        self.next = backState
         self.top = 0
         self.left = 0
 
         self.done = False
         self.updateCallback = updateCallback
-        self.unittext = valueConfig.getUnits()
     def cleanup(self):
         super().cleanup()
         # reset back to the first digit if we close the menu
         self.state_name = '0'
         self.surface.fill(self.theme.colours.transparent)
     def startup(self):
-        # how many digits do we need to allow the max number to be put in
-        self.digitCount = len(str(max(self.valueConfig.getMaxValue(), self.valueConfig.getValue())))
         self.currentValue = self.valueConfig.getValue()
-        self.maxValue = self.valueConfig.getMaxValue()
-        self.minValue = self.valueConfig.getMinValue()
-        self.inRange =  self.currentValue >= self.minValue and self.currentValue <= self.maxValue
+        self._updateValid(self.currentValue)
         # how big a box do we need
         boxwidth = int(self.theme.menuWidth*0.1)
-        boxheight = self.theme.fonts.menuH1.size("0123456789"+self.unittext)[1]
+        boxheight = self.theme.fonts.menuH1.size("".join(self.charset)+self.suffix)[1]
         # setup the state machine and create the digit states
         self.state_dict = {}
-        for n in range(self.digitCount):
+        for n in range(self.charCount):
             key = n
-            prevkey = str((n-1)%self.digitCount)
-            nextkey = str((n+1)%self.digitCount)
-            # what is the current value of this digit from the whole number
-            currentDigit = math.floor((self.currentValue%pow(10,self.digitCount-n))/pow(10, self.digitCount-n-1))
-            # what is the biggest this digit could be based on its position and the max number
-            maxDigit = math.floor(self.maxValue/pow(10,self.digitCount-n-1))
-            if(maxDigit > 9):
-                maxDigit = 9
-            # name the state after its position
-            self.state_dict[str(key)] = DigitSelect(self.theme, prevkey, nextkey, currentDigit, maxDigit, 0, not self.inRange)
+            prevkey = str((n-1)%self.charCount)
+            nextkey = str((n+1)%self.charCount)
+            self.state_dict[str(key)] = CharacterSelect(self.theme, prevkey, nextkey, self._charValueFromIndex(n), self._charmapFromIndex(n), self._mapEventToCharKey, not self.validValue)
+
             boxwidth += self.state_dict[str(key)].surface.get_width() + self.theme.menuWidth*0.01
-        boxwidth += self.theme.fonts.menuH1.size(self.unittext)[0]
+        boxwidth += self.theme.fonts.menuH1.size(self.suffix)[0]
         # create and setup the surface
         self.surface = pygame.Surface((boxwidth, boxheight), pygame.SRCALPHA)
         self.surface.fill(self.theme.colours.transparent)
         self.surfacerect = self.surface.get_rect()
 
-        self.textSurface = self.theme.fonts.menuH1.render(self.unittext, True, self.theme.colours.black)
+        self.textSurface = self.theme.fonts.menuH1.render(self.suffix, True, self.theme.colours.black)
         self.textrect = self.textSurface.get_rect()
         self.textrect.centery = self.surface.get_height()/2
         self.textrect.right = self.surfacerect.right-self.theme.menuWidth*0.05
         self.surfacerect.top = self.top
         self.surfacerect.left = self.left
-        # select the first digit, there should always be at least one
+        # select the first character, there should always be at least one
         self.state_name = '0'
         self.surface.fill(self.theme.colours.backgroundSubMenu)
         self.surface.blit(self.textSurface, self.textrect)
         self.state = self.state_dict[self.state_name]
-        # draw all the digits
+        # draw all the characters
         drawnext = self.theme.menuWidth*0.05
-        for n in range(self.digitCount):
+        for n in range(self.charCount):
             digitState = self.state_dict[str(n)]
             digitState.surfacerect.left = drawnext
             digitState.surfacerect.centery = self.surface.get_height()/2
             drawnext = digitState.surfacerect.right + self.theme.menuWidth*0.01
-            currentDigit = math.floor((self.currentValue%pow(10,self.digitCount-n))/pow(10, self.digitCount-n-1))
-            digitState.setValue(currentDigit)
+            digitState.setValue(self._charValueFromIndex(n))
             digitState.update()
             self.surface.blit(digitState.get_surface(), digitState.surfacerect)
         self.state.startup()
         self.surface.blit(self.state.get_surface(), self.state.surfacerect)
     def get_event(self, event):
         handeled = self.state.get_event(event)
-        newValue = 0
-        for n in range(self.digitCount):
-            digitState = self.state_dict[str(n)]
-            newValue += digitState.currentValue*pow(10,self.digitCount-n-1)
-        self.inRange =  newValue >= self.minValue and newValue <= self.maxValue
-        for digit in self.state_dict.values():
-            if digit.setErrorHighlight(not self.inRange):
-                self.surface.fill(self.theme.colours.backgroundSubMenu, digit.surfacerect)
-                self.surface.blit(digit.get_surface(), digit.surfacerect)
+        newValue = self._getValue()
+        self._updateValid(newValue)
+        for char in self.state_dict.values():
+            if char.setErrorHighlight(not self.validValue):
+                self.surface.fill(self.theme.colours.backgroundSubMenu, char.surfacerect)
+                self.surface.blit(char.get_surface(), char.surfacerect)
         if not handeled:
             if event == navEvent.BACK:
                 self.done = True
                 return True
             if event == navEvent.SELECT :
-                self.currentValue = newValue
-                self.valueConfig.setValue(newValue)
-                if self.updateCallback is not None:
-                    self.updateCallback()
+                if self.currentValue != newValue:
+                    self.currentValue = newValue
+                    self.valueConfig.setValue(newValue)
+                    if self.updateCallback is not None:
+                        self.updateCallback()
                 self.done = True
                 return True
         else:
             return True
         return False
 
+# sub menu for inputing whole numbers and pass new value to callback when done
+class NumberSelect(CharSeqSelect):
+    def __init__(self, theme, backState, valueConfig, updateCallback):
+        super().__init__(theme, backState, valueConfig, updateCallback)
+        # how many digits do we need to allow the max number to be put in
+        self.charCount = len(str(max(self.valueConfig.getMaxValue(), self.valueConfig.getValue())))
+        self.suffix = self.valueConfig.getUnits()
+        self.charset = [str(x) for x in range(0,10)]
 
+    def _mapEventToCharKey(self, event):
+        if event.isNumeric():
+            return (True, event.numericValue)
+        else:
+            return (False, None)
+
+    def _getValue(self):
+        newValue = 0
+        for n in range(self.charCount):
+            digitState = self.state_dict[str(n)]
+            newValue += digitState.currentValue*pow(10,self.charCount-n-1)
+        return newValue
+
+
+    def _updateValid(self, newValue):
+        self.validValue =  newValue >= self.valueConfig.getMinValue() and newValue <= self.valueConfig.getMaxValue()
+
+    def _charValueFromIndex(self, n):
+        # what is the current value of this digit from the whole number
+        return math.floor((self.currentValue%pow(10,self.charCount-n))/pow(10, self.charCount-n-1))
+
+    def _charmapFromIndex(self, n):
+        # what is the biggest this digit could be based on its position and the max number
+        maxDigit = math.floor(self.valueConfig.getMaxValue()/pow(10,self.charCount-n-1))
+        if(maxDigit > 9):
+            maxDigit = 9
+        # name the state after its position
+        chars={}
+        for n in range(0, maxDigit+1):
+            chars[n]=str(n)
+        return chars
+
+    def startup(self):
+        # how many digits do we need to allow the max number to be put in
+        self.charCount = len(str(max(self.valueConfig.getMaxValue(), self.valueConfig.getValue())))
+        super().startup()
+
+# sub menu for inputing strings and pass new value to callback when done
+class StringSelect(CharSeqSelect):
+    def __init__(self, theme, backState, valueConfig, updateCallback):
+        super().__init__(theme, backState, valueConfig, updateCallback)
+        # how many chars do we need
+        self.charCount = max(self.valueConfig.getMaxLen(), len(self.valueConfig.getValue()))
+        self.charset = self.valueConfig.getValidChars()
+
+    def _mapEventToCharKey(self, event):
+        return (False, None)
+
+    def _getValue(self):
+        newValue = ""
+        for n in range(self.charCount):
+            charState = self.state_dict[str(n)]
+            if charState.currentValue is None:
+                newValue += self.currentValue[n]
+            else:
+                newValue += charState.currentValue
+        return newValue.strip()
+
+    def _updateValid(self, newValue):
+        self.validValue = len(newValue)>0 or self.valueConfig.getAllowBlank()
+
+    def _charValueFromIndex(self, n):
+        if n < len(self.currentValue):
+            if self.currentValue[n] in self.charset:
+                print(self.currentValue[n])
+                return self.currentValue[n]
+            else:
+                return None
+        else:
+            return " "
+
+    def _charmapFromIndex(self, n):
+        return {x:x for x in self.charset}
+
+    def startup(self):
+        # how many chars do we need
+        self.charCount = max(self.valueConfig.getMaxLen(), len(self.valueConfig.getValue()))
+        super().startup()
 
 # sub menu for inputing multiple whole numbers and execute a callback when done
 class MultipleNumberSelect(SubMenuGeneric):
@@ -831,7 +911,7 @@ class Menu(SuperStatesSurface):
                 menuState.surfacerect.top = drawnext
                 menuState.surfacerect.left = self.theme.menuWidth
                 self.surface.blit(menuState.get_surface(), menuState.surfacerect)
-            elif(isinstance(menuState, NumberSelect) or isinstance(menuState, SubMenuGeneric)):
+            elif(isinstance(menuState, CharSeqSelect) or isinstance(menuState, SubMenuGeneric)):
                 menuState.top = drawnext
                 menuState.left = self.theme.menuWidth
                 print((drawnext, self.theme.menuWidth))
@@ -856,7 +936,7 @@ class Menu(SuperStatesSurface):
             for rect in rects:
                 if(isinstance(state, MenuItem)):
                     self.surface.fill(self.theme.colours.backgroundSubMenu, rect)
-                elif(isinstance(state, ListSelect) or isinstance(state, NumberSelect) or isinstance(state, SubMenuGeneric)):
+                elif(isinstance(state, ListSelect) or isinstance(state, CharSeqSelect) or isinstance(state, SubMenuGeneric)):
                     self.surface.fill(self.theme.colours.transparent, rect)
             self.surface.blits(state.getBlitPairs())
 

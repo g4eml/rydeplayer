@@ -30,6 +30,7 @@ class sourceModeEnum(enum.Enum):
 class sources(enum.Enum):
     LONGMYND = enum.auto()
     COMBITUNER = enum.auto()
+    RTMPSTREAM = enum.auto()
 
     def getSource(self):
         thisSource = rydeplayer.sources.common.source.getSource(self)
@@ -71,10 +72,11 @@ class LOOffsetSideEnum(enum.Enum):
 
 class CodecEnum(enum.Enum):
     MP2  = (enum.auto(), "MPEG-2")
-    MPA  = (enum.auto(), "MPA")
+    MP3  = (enum.auto(), "MP3")
     AAC  = (enum.auto(), "AAC")
     H263 = (enum.auto(), "H.263")
     H264 = (enum.auto(), "H.264")
+    MPA  = (enum.auto(), "MPA")
     H265 = (enum.auto(), "H.265")
     AC3  = (enum.auto(), "AC3")
 
@@ -210,31 +212,6 @@ class sourceStatus(object):
         else:
             return False
 
-    def setPIDs(self, newval):
-        codecmap = {
-             2:rydeplayer.sources.common.CodecEnum.MP2,
-             3:rydeplayer.sources.common.CodecEnum.MPA,
-             4:rydeplayer.sources.common.CodecEnum.MPA,
-            15:rydeplayer.sources.common.CodecEnum.AAC,
-            16:rydeplayer.sources.common.CodecEnum.H263,
-            27:rydeplayer.sources.common.CodecEnum.H264,
-            32:rydeplayer.sources.common.CodecEnum.MPA,
-            36:rydeplayer.sources.common.CodecEnum.H265,
-            129:rydeplayer.sources.common.CodecEnum.AC3,
-            }
-        newPIDs = {}
-        for pid, codec in newval.items():
-            if codec in codecmap:
-                newPIDs[pid] = codecmap[codec]
-            else:
-                newPIDs[pid] = str(codec)+"?"
-        if self.pids != newPIDs:
-            self.pids = newPIDs
-            self.onChangeFire()
-            return True
-        else:
-           return False
-
     def setFreq(self, newval):
         if(isinstance(newval, int)):
             if self.freq != newval:
@@ -320,19 +297,11 @@ class tunerBand(object):
     _defaultSource = sources.LONGMYND
     def __init__(self):
         self.source = self._defaultSource
-        self.freq = 0
-        self.loside = LOOffsetSideEnum.LOW
         self.gpioid = 0
         self.dumpCache = {}
         self.dumpCache = self.dumpBand()
-        self.tunerMinFreq=0
-        self.tunerMaxFreq=0
-        self.defaultfreq=0
-        self.multiFreq=False
 
     def dumpBand(self):
-        self.dumpCache['lofreq'] = self.freq
-        self.dumpCache['loside'] = self.loside.name.upper()
         self.dumpCache['gpioid'] = self.gpioid
         return self.dumpCache
 
@@ -342,78 +311,131 @@ class tunerBand(object):
 
     @classmethod
     def loadBand(cls, config):
-        configUpdated = False
         perfectConfig = True
-        # load the default band if there is no config at all
-        if not isinstance(config, dict):
-            print("Band invalid, skipping")
-            perfectConfig = False
-            self = cls._defaultSource.getSource().getBand()()
+        if cls is not rydeplayer.sources.common.tunerBand:
+            self = cls()
         else:
-            # parse and set source type
-            source = cls._defaultSource
-            if 'source' in config:
-                if isinstance(config['source'], str):
-                    sourceset = False
-                    for sourceopt in rydeplayer.sources.common.sources:
-                        if sourceopt.name == config['source'].upper():
-                            source = sourceopt
-                            sourceset = True
-                            configUpdated = True
-                            break
-                    if not sourceset:
-                        print("Source config invalid, skipping")
-                        perfectConfig = False
-                else:
-                    print("Source config invalid, skipping")
-                    perfectConfig = False
-            # create band object from selected source
-            subClassSuccess, self = source.getSource().getBand().loadBand(config)
-            perfectConfig = perfectConfig and subClassSuccess
-            # check lo frequency and side, both must be valid for either to be updated
-            if 'lofreq' in config:
-                if isinstance(config['lofreq'], int):
-                    # lo frequency is valid, check side
-                    if 'loside' in config:
-                        if isinstance(config['loside'], str):
-                            for losideopt in LOOffsetSideEnum:
-                                if losideopt.name == config['loside'].upper():
-                                    self.loside = losideopt
-                                    self.freq = config['lofreq']
-                                    configUpdated = True
-                                    break
-                        if not configUpdated:
-                            print("Band LO side invalid, skipping frequency and LO side")
+            configUpdated = False
+            # load the default band if there is no config at all
+            if not isinstance(config, dict):
+                print("Band invalid, skipping")
+                perfectConfig = False
+                self = cls._defaultSource.getSource().getBand()()
+            else:
+                # parse and set source type
+                source = cls._defaultSource
+                if 'source' in config:
+                    if isinstance(config['source'], str):
+                        sourceset = False
+                        for sourceopt in rydeplayer.sources.common.sources:
+                            if sourceopt.name == config['source'].upper():
+                                source = sourceopt
+                                sourceset = True
+                                configUpdated = True
+                                break
+                        if not sourceset:
+                            print("Source config invalid, skipping")
                             perfectConfig = False
                     else:
-                        print("Band LO side missing, skipping frequency and LO side")
+                        print("Source config invalid, skipping")
                         perfectConfig = False
-                else:
-                    print("LO frequency config invalid, skipping frequency and symbol rate")
-                    perfectConfig = False
-            else:
-                print("LO frequency config missing, skipping frequency and symbol rate")
-                perfectConfig = False
-            if 'gpioid' in config:
-                if isinstance(config['gpioid'], int):
-                    if config['gpioid'] < 8 and config['gpioid'] >= 0:
-                        self.gpioid = config['gpioid']
-                        configUpdated = True
+                # create band object from selected source
+                subClassSuccess, self = source.getSource().getBand().loadBand(config)
+                perfectConfig = perfectConfig and subClassSuccess
+                if 'gpioid' in config:
+                    if isinstance(config['gpioid'], int):
+                        if config['gpioid'] < 8 and config['gpioid'] >= 0:
+                            self.gpioid = config['gpioid']
+                            configUpdated = True
+                        else:
+                            print("GPIO ID config out of range, skipping")
+                            perfectConfig = False
                     else:
-                        print("GPIO ID config out of range, skipping")
+                        print("GPIO ID config invalid, skipping")
                         perfectConfig = False
                 else:
-                    print("GPIO ID config invalid, skipping")
+                    print("GPIO ID config missing, skipping")
+
+        return (perfectConfig, self)
+
+    def syncVars(self, oldVars):
+        varsUpdated = False
+        newVars = dict()
+        #remove prerequisites from deleted vars
+        removedVars = set(oldVars.keys())-set(newVars.keys())
+        if len(removedVars) > 0:
+            varsUpdated = True
+        return (varsUpdated, newVars)
+
+    def getSource(self):
+        return self.source
+
+    def getGPIOid(self):
+        return self.gpioid
+
+    def getBandVars(self):
+        return {"GPIO ID":self.gpioid}
+
+    def __eq__(self,other):
+        # compare 2 bands
+        if not isinstance(other,tunerBand):
+            raise NotImplementedError
+        else:
+            return self.gpioid == other.gpioid
+
+    def __hash__(self):
+        return hash((self.gpioid))
+
+class tunerBandRF(tunerBand):
+    def __init__(self):
+        self.freq = 0
+        self.loside = LOOffsetSideEnum.LOW
+        self.tunerMinFreq=0
+        self.tunerMaxFreq=0
+        self.defaultfreq=0
+        self.multiFreq=False
+        super().__init__()
+
+    def dumpBand(self):
+        super().dumpBand()
+        self.dumpCache['lofreq'] = self.freq
+        self.dumpCache['loside'] = self.loside.name.upper()
+        return self.dumpCache
+
+    @classmethod
+    def loadBand(cls, config):
+        perfectConfig = True
+        subClassSuccess, self = super(tunerBandRF, cls).loadBand(config)
+        perfectConfig = perfectConfig and subClassSuccess
+        # check lo frequency and side, both must be valid for either to be updated
+        if 'lofreq' in config:
+            if isinstance(config['lofreq'], int):
+                # lo frequency is valid, check side
+                if 'loside' in config:
+                    if isinstance(config['loside'], str):
+                        for losideopt in LOOffsetSideEnum:
+                            if losideopt.name == config['loside'].upper():
+                                self.loside = losideopt
+                                self.freq = config['lofreq']
+                                configUpdated = True
+                                break
+                    if not configUpdated:
+                        print("Band LO side invalid, skipping frequency and LO side")
+                        perfectConfig = False
+                else:
+                    print("Band LO side missing, skipping frequency and LO side")
                     perfectConfig = False
             else:
-                print("GPIO ID config missing, skipping")
-
+                print("LO frequency config invalid, skipping frequency and symbol rate")
+                perfectConfig = False
+        else:
+            print("LO frequency config missing, skipping frequency and symbol rate")
+            perfectConfig = False
         return (perfectConfig, self)
         
     def syncVars(self, oldVars):
         freqrange = (self.mapTuneToReq(self.tunerMinFreq), self.mapTuneToReq(self.tunerMaxFreq))
-        varsUpdated = False
-        newVars = dict()
+        varsUpdated, newVars = super().syncVars({key:oldVars[key] for key in oldVars if key!='freq'})
         # reuse old var if its still valid
         if 'freq' in oldVars and (
                 (isinstance(oldVars['freq'], tunerConfigIntList) and self.multiFreq) or
@@ -442,17 +464,11 @@ class tunerBand(object):
             varsUpdated = True
         return (varsUpdated, newVars)
 
-    def getSource(self):
-        return self.source
-
     def getFrequency(self):
         return self.freq
 
     def getLOSide(self):
         return self.loside
-
-    def getGPIOid(self):
-        return self.gpioid
 
     # return tuner frequency from requested frequency
     def mapReqToTune(self, freq):
@@ -481,15 +497,18 @@ class tunerBand(object):
         output += str(self.freq)
         return output
 
+    def getBandVars(self):
+        return {**super().getBandVars(), "IF Freq":self.getOffsetStr()}
+
     def __eq__(self,other):
         # compare 2 bands
-        if not isinstance(other,tunerBand):
+        if not isinstance(other,tunerBandRF):
             raise NotImplementedError
         else:
-            return self.freq == other.freq and self.loside == other.loside and self.gpioid == other.gpioid
+            return super().__eq__(other) and self.freq == other.freq and self.loside == other.loside
     
     def __hash__(self):
-        return hash((self.freq, self.loside, self.gpioid))
+        return hash((super().__hash__(), self.freq, self.loside))
 
 class tunerConfigGeneral(rydeplayer.common.validTracker):
     def __init__(self, initValid, longName, prereqConfigs = None):
@@ -750,6 +769,121 @@ class tunerConfigIntList(tunerConfigGeneral):
     def __hash__(self):
         return hash((tuple(self.getValues()), self.isSingle()))
 
+# Stores the a tuner string and its limits
+class tunerConfigStr(tunerConfigGeneral):
+    def __init__(self, value, maxLen, allowBlank, charset, longName, prereqConfigs=None):
+
+        self.value = value
+        if isinstance(charset, list):
+            validChars = True
+            for char in charset:
+                if not isinstance(char, str) or len(char)>1:
+                    validChars = False
+                    break
+            if validChars:
+                self.validChars = charset
+            else:
+                self.validChars = []
+        else:
+            self.validChars = []
+        if maxLen >= 0:
+            self.maxLen = maxLen
+        else:
+            self.maxLen = 0
+        if isinstance(allowBlank, bool):
+            self.allowBlank = allowBlank
+        else:
+            self.allowBlank = False
+
+        super().__init__(initValid=( len(value) <= self.maxLen and (len(value)>0 or self.allowBlank) and set(value) <= set(validChars) ), longName=longName, prereqConfigs=prereqConfigs)
+
+    def setValue(self, newval):
+        if self.value != newval:
+            self.value = newval
+            self.updateValid(len(self.value) <= self.maxLen and (len(self.value)>0 or self.allowBlank) and set(self.value) <= set(self.validChars))
+
+    def setMaxLen(self, newMaxLen):
+        if self.maxLen != newMaxLen:
+            if maxLen >= 0:
+                self.maxLen = maxLen
+            else:
+                self.maxLen = 0
+            self.updateValid(len(self.value) <= self.maxLen and (len(self.value)>0 or self.allowBlank) and set(self.value) <= set(self.validChars))
+
+    def setAllowBlank(self, newAllowBlank):
+        if self.allowBlank != newAllowBlank:
+            if isinstance(allowBlank, bool):
+                self.allowBlank = allowBlank
+            else:
+                self.allowBlank = False
+            self.updateValid(len(self.value) <= self.maxLen and (len(self.value)>0 or self.allowBlank) and set(self.value) <= set(self.validChars))
+
+    def setValidChars(self, newValidChars):
+        if self.validChars != newValidChars:
+            if isinstance(newValidChars, list):
+                validChars = True
+                for char in newValidChars:
+                    if not isinstance(char, str) or len(char)>1:
+                        validChars = False
+                        break
+                if validChars:
+                    self.validChars = newValidChars
+                else:
+                    self.validChars = []
+            else:
+                self.validChars = []
+            self.updateValid(len(self.value) <= self.maxLen and (len(self.value)>0 or self.allowBlank) and set(self.value) <= set(self.validChars))
+
+    def getValue(self):
+        return self.value
+
+    def getMaxLen(self):
+        return self.maxLen
+
+    def getAllowBlank(self):
+        return self.allowBlank
+
+    def getValidChars(self):
+        return self.validChars
+
+    def copyConfig(self):
+        return tunerConfigStr(self.value, self.maxLen, self.allowBlank, self.validChars, self.longName)
+
+    # parse config file value and return new object using this one as a template
+    def parseNew(self, config):
+        newConf = self.copyConfig()
+        perfectConfig = True
+        updated = False
+        if isinstance(config, str):
+            newConf.setValue(config)
+            updated=True
+        else:
+            print("Config invalid for var:"+self.longName)
+            perfectConfig = False
+        if updated:
+            return (perfectConfig, newConf)
+        else:
+            return (perfectConfig, None)
+
+    # update this to match other config
+    def updateToMatch(self, newVal):
+        if isinstance(newVal, tunerConfigStr):
+            self.setValue(newVal.getValue())
+        else:
+            raise NotImplementedError
+
+    def __str__(self):
+        return str(self.value)
+
+    def __eq__(self, other):
+        if not isinstance(other,tunerConfigStr):
+            raise NotImplementedError
+        else:
+            return other.getValue() == self.getValue()
+
+    def __hash__(self):
+        return hash(self.getValue())
+
 class tunerConfig(rydeplayer.common.validTracker):
     def __init__(self):
         self.updateCallbacks = [] # function that is called when the config changes
@@ -772,12 +906,13 @@ class tunerConfig(rydeplayer.common.validTracker):
 
     # update this tuner config to match the provided one
     def setConfigToMatch(self, fromConfig):
-        self.setBand(fromConfig.getBand())
-        fromVars = fromConfig.getVars()
-        for thisVar in self.vars:
-            self.vars[thisVar].updateToMatch(fromVars[thisVar])
-        self.updateValid()
-        self.runCallbacks()
+        if fromConfig != self:
+            self.setBand(fromConfig.getBand())
+            fromVars = fromConfig.getVars()
+            for thisVar in self.vars:
+                self.vars[thisVar].updateToMatch(fromVars[thisVar])
+            self.updateValid()
+            self.runCallbacks()
 
     def loadConfig(self, config, bandLibrary = []):
         configUpdated = False
@@ -825,19 +960,21 @@ class tunerConfig(rydeplayer.common.validTracker):
         return perfectConfig
 
     def setBand(self, newBand):
-        self.band = newBand
-        varsChanged, newVars = self.band.syncVars(self.vars)
-        if varsChanged:
-            # update the validity trackers to only be on current vars
-            for key in self.vars:
-                if isinstance(self.vars[key], rydeplayer.common.validTracker):
-                    self.vars[key].removeValidCallback(self.updateValid)
-            for key in newVars:
-                if isinstance(newVars[key], rydeplayer.common.validTracker):
-                    newVars[key].addValidCallback(self.updateValid)
-            self.vars = newVars
-            self.runVarChangeCallbacks()
-        self.runCallbacks()
+        if self.band != newBand:
+            self.band = newBand
+            varsChanged, newVars = self.band.syncVars(self.vars)
+            if varsChanged:
+                # update the validity trackers to only be on current vars
+                for key in self.vars:
+                    if isinstance(self.vars[key], rydeplayer.common.validTracker):
+                        self.vars[key].removeValidCallback(self.updateValid)
+                for key in newVars:
+                    if isinstance(newVars[key], rydeplayer.common.validTracker):
+                        newVars[key].addValidCallback(self.updateValid)
+                self.vars = newVars
+                self.runVarChangeCallbacks()
+            self.runCallbacks()
+
     def getBand(self):
         return self.band
 
@@ -896,8 +1033,12 @@ class tunerConfig(rydeplayer.common.validTracker):
         return hash((frozenset(self.vars.items()), self.band))
 
     def __str__(self):
-        toDisplay = {'IF offset': self.band.getOffsetStr()}
-        maxNameLen = len('IF offset')
+        maxNameLen = 0
+        toDisplay = {}
+        bandvars = self.band.getBandVars()
+        for key in bandvars:
+            maxNameLen = max(maxNameLen,len(key))
+            toDisplay[key]=str(bandvars[key])
         for key in self.vars:
             varname = self.vars[key].getLongName()
             maxNameLen = max(maxNameLen,len(varname))
@@ -919,6 +1060,7 @@ class eventsToThread(enum.Enum):
 class eventsFromThread(enum.Enum):
     NEWFULLSTATUS = enum.auto()
     NEWCORESTATE = enum.auto()
+    NEWMEDIAFD = enum.auto()
 
 # threaded wrapper around source
 class sourceManagerThread(object):
@@ -946,6 +1088,9 @@ class sourceManagerThread(object):
         self.sourceMan.getStatus().addOnChangeCallback(self.statusCallbackThread)
         # trackers for the state in and out of the thread
         self.coreStateThread = self.sourceMan.getCoreState()
+        # setup intial media file descriptors
+        self.mediaFdCacheThread = self.sourceMan.getMediaFd()
+        self.mediaFdCacheMain = self.mediaFdCacheThread
         # create and start thread
         self.thread = threading.Thread(target=self.threadLoop, daemon=True)
         self.sourceStatus.onChangeFire()
@@ -961,11 +1106,14 @@ class sourceManagerThread(object):
             self.thread.start()
             self.start()
 
+    # should the player expect the pipe to be hungup fore resetting
+    def waitForMediaHangup(self):
+        return self.sourceMan.waitForMediaHangup()
     def remedia(self):
         self.sourceMan.remedia()
 
     def getMediaFd(self):
-        return self.sourceMan.getMediaFd()
+        return self.mediaFdCacheMain
     def getMainFDs(self):
         return [self.fromRecvSock]
     def getThreadFDs(self):
@@ -989,6 +1137,8 @@ class sourceManagerThread(object):
                 newStatus = queueArg
             elif queueCommand == eventsFromThread.NEWCORESTATE:
                 self.coreStateMain = queueArg
+            elif queueCommand == eventsFromThread.NEWMEDIAFD:
+                self.mediaFdCacheMain = queueArg
         if newStatus is not None:
             self.sourceStatus.setStatusToMatch(newStatus)
 
@@ -1056,4 +1206,9 @@ class sourceManagerThread(object):
             if newCoreState != self.coreStateThread:
                 self.coreStateThread = newCoreState
                 self.fromEventQueue.put((eventsFromThread.NEWCORESTATE, newCoreState))
+                self.fromSendSock.send(b"\x00")
+            newMediaFd = self.sourceMan.getMediaFd()
+            if newMediaFd != self.mediaFdCacheThread:
+                self.mediaFdCacheThread = newMediaFd
+                self.fromEventQueue.put((eventsFromThread.NEWMEDIAFD, newMediaFd))
                 self.fromSendSock.send(b"\x00")
