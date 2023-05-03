@@ -20,6 +20,7 @@ import enum, queue, socket, threading
 
 # Enum containing a list of all possible modules
 class AvailableModules(enum.Enum):
+    PLAYERID = enum.auto()
     MUTE = enum.auto()
     VOLUME = enum.auto()
     SIGLEVEL = enum.auto()
@@ -57,15 +58,20 @@ class Group(object):
 
     # Set the layout details of this group
     def setModules(self, modules):
-        self.modules = modules
+        newmodules = {}
+        for moduleName, module in modules.items():
+            if module is None:
+                newmodules[moduleName]=None
+            else:
+                newmodules[moduleName]=self.theme.relativeRect(*module)
+        self.modules = newmodules
 
     def getEnabledModules(self):
         return self.modules.keys()
 
 # Store and parse OSD config
 class Config(object):
-    def __init__(self, theme):
-        self.theme = theme
+    def __init__(self):
         self.activeGroup={AvailableModules.MUTE:None, AvailableModules.SIGLEVEL:None, AvailableModules.PROGRAM:None}
         self.inactiveGroup={AvailableModules.MUTE:None}
         self.timers={TimerLength.PROGRAMTRIGGER: 5, TimerLength.USERTRIGGER: 5}
@@ -174,7 +180,7 @@ class Config(object):
                         if self._checkScaleRange(config, 'y', str(config['datum']).upper() in ["TR", "TC", "TR", "BR", "BC", "BL"]):
                             if self._checkScaleRange(config, 'w', True):
                                 if self._checkScaleRange(config, 'h', True):
-                                    outRect = self.theme.relativeRect(rydeplayer.common.datumCornerEnum.__members__[str(config['datum']).upper()], config['x'], config['y'], config['w'], config['h'])
+                                    outRect = (rydeplayer.common.datumCornerEnum.__members__[str(config['datum']).upper()], config['x'], config['y'], config['w'], config['h'])
                                 else:
                                     print("Invalid or missing height value, using defaults")
                             else:
@@ -207,6 +213,7 @@ class Controller(object):
         self.surface = pygame.image.frombuffer(self.dispmanxlayer, self.dispmanxlayer.size, 'RGBA')
         # Initialise modules
         self.modules = dict()
+        self.modules[AvailableModules.PLAYERID]=rydeplayer.osd.modules.textDisplay(self.theme, self.draw, theme.relativeRect(rydeplayer.common.datumCornerEnum.TL, 0.03, 0.03, 0.25, 0.04), self.player.getPlayerID())
         self.modules[AvailableModules.MUTE]=rydeplayer.osd.modules.mute(self.theme, self.draw, theme.relativeRect(rydeplayer.common.datumCornerEnum.TR, 0.03, 0.03, 0.1, 0.1), self.player.getMute())
         self.player.addMuteCallback(self.modules[AvailableModules.MUTE].updateVal)
         self.modules[AvailableModules.VOLUME]=rydeplayer.osd.modules.volume(self.theme, self.draw, theme.relativeRect(rydeplayer.common.datumCornerEnum.TR, 0.25, 0.03, 0.2, 0.15), self.player.getVolume())

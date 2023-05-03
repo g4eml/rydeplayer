@@ -36,7 +36,7 @@ class generic(object):
     def setRect(self, newrect, deferRedraw = False):
         oldrect = self.rect.copy()
         if newrect is None:
-             newrect = self.defaultRect.copy() # so we don't have to rely on something not changing it
+            newrect = self.defaultRect.copy() # so we don't have to rely on something not changing it
         if newrect != oldrect:
             self.rect = newrect
             self.surface = pygame.Surface(self.rect.size, pygame.SRCALPHA)
@@ -93,9 +93,9 @@ class meterDisplay(generic):
                 meterbar.right = self.rect.width
                 textwidth = self.rect.width - meterbar.width # total width available for the text
                 staticfontsize = self.theme.fontSysSizeOptimize(self.renderedMeterConfig.staticText, textwidth*0.8, 'freesans')
-                staticfont = pygame.font.SysFont('freesans', staticfontsize) # font for the static unit text
+                staticfont = self.theme.fontLib.SysFont('freesans', staticfontsize) # font for the static unit text
                 dynamicfontsize = self.theme.fontSysSizeOptimize("25.5", textwidth*0.8, 'freesans')
-                self.dynamicfont = pygame.font.SysFont('freesans', dynamicfontsize) # font for the actual report value
+                self.dynamicfont = self.theme.fontLib.SysFont('freesans', dynamicfontsize) # font for the actual report value
                 textheight = staticfont.get_linesize() + self.dynamicfont.get_linesize()
                 self.textbox = pygame.Rect((0,0), (textwidth, textheight))
                 self.textbox.centery=self.rect.height/2 # center the box containing the text vertically in the bigger box
@@ -236,14 +236,14 @@ class program(generic):
             self.serviceRect = pygame.Rect((contentboxleft.x, self.providerRect.bottom),(contentboxleft.width, contentboxleft.height/3))
             serviceDetailsBox = pygame.Rect((contentboxleft.x-self.rect.height*0.05,(contentboxleft.height/3)+contentboxleft.top),(contentboxleft.width+self.rect.height*0.1, (contentboxleft.height/3)*2))
             self.surface.fill(self.theme.colours.white, serviceDetailsBox)
-            self.largeFont = pygame.font.SysFont('freesans', self.theme.fontSysSizeOptimizeHeight(contentboxleft.height/3, 'freesans')) # font for the large program details
+            self.largeFont = self.theme.fontLib.SysFont('freesans', self.theme.fontSysSizeOptimizeHeight(contentboxleft.height/3, 'freesans')) # font for the large program details
             # right box
             contentboxright = pygame.Rect((contentboxleft.right+self.rect.height*0.2,self.rect.height*0.1),((self.rect.width-(self.rect.height*0.5))*0.4, self.rect.height*0.8)) # right content box
             self.modulationRect = pygame.Rect((contentboxright.x,contentboxright.top),(contentboxright.width, contentboxright.height/3))
             self.pidsRect = pygame.Rect((contentboxright.x,(contentboxright.height/3)+contentboxright.top),(contentboxright.width, (contentboxright.height/3)*2)) # 
             pidsColBox = pygame.Rect((self.pidsRect.x-self.rect.height*0.05,self.pidsRect.top),(self.pidsRect.width+self.rect.height*0.1, self.pidsRect.height)) # pids content box
             self.surface.fill(self.theme.colours.white, pidsColBox)
-            self.smallFont = pygame.font.SysFont('freesans', self.theme.fontSysSizeOptimizeHeight(self.pidsRect.height/4, 'freesans')) # font for the large program details
+            self.smallFont = self.theme.fontLib.SysFont('freesans', self.theme.fontSysSizeOptimizeHeight(self.pidsRect.height/4, 'freesans')) # font for the large program details
 
         if drawAll or self.presetName != self.renderedPresetName:
             self.renderedPresetName = self.presetName
@@ -311,6 +311,45 @@ class program(generic):
         super().redraw(rects, deferRedraw)
 
 # module that displays the a numeric value with units
+class textDisplay(generic):
+    def __init__ (self, theme, drawCallback, rect, initialValue):
+        super().__init__(theme, drawCallback, rect)
+        self.rect = rect.copy()
+        self.renderedbox = None
+        self.value = initialValue
+        self.dynamicTextRect = None
+
+    def updateVal(self, newval):
+        if newvalue is not None:
+            if newvalue != self.value:
+                self.value = newvalue
+                self.redraw()
+        else:
+            self.value = None
+            self.redraw()
+
+    def redraw(self, rects = None, deferRedraw = False):
+        # if the layout needs recalcuating because its new, moved or changed size
+        if self.renderedbox is None or self.renderedbox != self.rect:
+            self.surface.fill(self.theme.colours.transparent)
+            dynamicfontsize = self.theme.fontSysSizeOptimizeHeight(self.rect.height, 'freesans')
+            self.dynamicfont = self.theme.fontLib.SysFont('freesans', dynamicfontsize) # font for value to be displayed
+            self.renderedbox = self.rect.copy()
+        # render a blank if it is not set
+        if self.value is None :
+            valuestr = ""
+        else:
+            valuestr = str(self.value)
+        if self.dynamicTextRect is not None :
+            self.surface.fill(self.theme.colours.transparent, self.dynamicTextRect)
+        dynamicTextSurface = self.theme.outlineFontRender(valuestr, self.dynamicfont, self.theme.colours.white, self.theme.colours.black, 1)
+        self.dynamicTextRect = dynamicTextSurface.get_rect()
+        self.dynamicTextRect.centery = self.rect.height/2
+        self.dynamicTextRect.left = 0;
+        self.surface.blit(dynamicTextSurface, self.dynamicTextRect)
+        super().redraw(rects, deferRedraw)
+
+# module that displays the a numeric value with units
 class numericDisplay(generic):
     def __init__ (self, theme, drawCallback, rect):
         super().__init__(theme, drawCallback, rect)
@@ -341,7 +380,7 @@ class numericDisplay(generic):
         if self.renderedbox is None or self.renderedbox != self.rect:
             self.surface.fill(self.theme.colours.transparent)
             dynamicfontsize = self.theme.fontSysSizeOptimizeHeight(self.rect.height, 'freesans')
-            self.dynamicfont = pygame.font.SysFont('freesans', dynamicfontsize) # font for value to be displayed
+            self.dynamicfont = self.theme.fontLib.SysFont('freesans', dynamicfontsize) # font for value to be displayed
             self.renderedbox = self.rect.copy()
         # render a blank if it is not set
         if self.value is None or self.numericConfig is None:
