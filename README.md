@@ -12,12 +12,15 @@ Install packaged dependencies:
 
 Install pyDispmanx driver from https://github.com/eclispe/pyDispmanx and ensure the .so file is in your PYTHONPATH
 
-Install Longmynd. Currently recommending that you use this fork as it has fixes that have not been merged upstream yet: https://github.com/eclispe/longmynd
+Install Longmynd. Currently recommending that the BATC fork is used: https://github.com/BritishAmateurTelevisionClub/longmynd
+
+Install CombiTunerExpress. CombiTunerExpress is proprietary and only available as a binary.
 
 ## Config Files
 A complete sample YAML config file is provided as `config.sample.yaml`, this contains all currently configurable options. If some options are omitted from the config file then internal defaults will be used.
 ### Config file options
-* ```configRev``` The config format revision of this file, if present but wrong the file will not load, if missing file will load with warning. Current revision is 2
+* ```configRev``` The config format revision of this file, if present but wrong the file will not load, if missing file will load with warning. Current revision is 3
+* ```playerID``` This is an ID string for this player, if no ID is specified a unique one is generated based on the hardware serial number. It is recommended to put quotes around the ID.
 * ```sources``` This section contains the source specific confgs
   * ```LONGMYND``` This section defines the paths and other settings for your Longmynd installation
     * ```binpath``` path to the Longmynd binary.
@@ -83,6 +86,7 @@ A complete sample YAML config file is provided as `config.sample.yaml`, this con
     * ```PROGRAM``` Displays the service, provider, preset name, modulation type and transport stream PID details for the current signal, size/location configuration the same as for ```MUTE```.
     * ```FREQ``` Varies slightly depending on source. For ```LONGMYND``` displays the actual frequency that is being received. For ```COMBITUNER``` displays the requested freqency only as reported by combituner.
     * ```BW``` Varies slightly depending on source. For ```LONGMYND``` displays the actual symbol rate that is being received in kSps. For ```COMBITUNER``` displays the requested bandwidth only as reported by combituner.
+    * ```PLAYERID``` Displays the current player ID.
 
   * ```inactive``` The same as the active list but for when the OSD is inactive.
 * ```network``` This section contains the network control configuration
@@ -101,6 +105,7 @@ A complete sample YAML config file is provided as `config.sample.yaml`, this con
   * ```enableMenu``` Enable the debug menu entry
   * ```autoplay``` Auto play the stream on lock, should be set to True.
   * ```disableHardwareCodec``` Disable hardware decoder in VLC, recommend setting to True, uses more CPU but is more reliable at decoding.
+  * ```useFTfont``` Use freetype font rendering adapter, supports emoji better but may cause memory leak so not recommended.
 
 ### Handset Configuration
 To configure a handset you need to add the handset configuration file to the handset library directory and add the filename (without the `.yaml` extension) to the main config file. Currently you also need to activate the driver listed in the handset file manually using the instructions in the Manual driver activation section.
