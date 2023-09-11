@@ -1,5 +1,5 @@
 #    Ryde Player provides a on screen interface and video player for Longmynd compatible tuners.
-#    Copyright © 2022 Tim Clark
+#    Copyright © 2023 Tim Clark
 #
 #    This program is free software: you can redistribute it and/or modify
 #    it under the terms of the GNU General Public License as published by
@@ -39,6 +39,7 @@ class Theme(object):
             'white': (255,255,255,255),
             'red': (255,0,0,255),
             'textError': (255,0,0,255),
+            'menuBlackInactive': (0,0,0,127),
             'backgroundMenu': (57,169,251,255),
             'backgroundSubMenu': (57,169,251,255),
             'backgroundPlayState': (255,0,0,255),
@@ -51,6 +52,7 @@ class Theme(object):
         self.displayHeight = int(displaySize[1])
         self.menuWidth = int(self.displayWidth/4)
         self.menuHeight = self.displayHeight
+        self.menuSpace = int(self.menuHeight*0.01)
         playStateTitleFontSize=self.fontSysSizeOptimize('Not Loaded', displaySize[0]/2, 'freesans')
         menuH1FontSize=self.fontSysSizeOptimize('BATC Ryde Project', self.menuWidth*0.85, 'freesans')
         inCharFontSize=self.fontSysSizeOptimize('Err', menuH1FontSize-(self.menuWidth*0.01), 'freesans')
@@ -201,7 +203,7 @@ class guiState(rydeplayer.states.gui.SuperStates):
             callback()
 
     # generate the menu states based on current config capabilites
-    def _genMenuStates(self, config, debugFunctions, superMenu):
+    def _genMenuStates(self, config, debugFunctions, toggleMuteFunc, adjVolFunc, superMenu):
         # get variables for current config
         tunerConfigVars = config.tuner.getVars()
         # generate config specific menu items
@@ -234,6 +236,7 @@ class guiState(rydeplayer.states.gui.SuperStates):
                 mainMenuStates[key] = rydeplayer.states.gui.MenuItem(self.theme, tunerConfigVars[key].getLongName(), lastkey, firstkey, key+'-sel', tunerConfigVars[key])
                 mainMenuStates[lastkey].down = key
                 mainMenuStates[firstkey].up = key
+                mainMenuStates[key+"-sel"].setParentLabel(mainMenuStates[key])
                 lastkey = key
                 # callback to menu header for validity updates
                 validCallFunc = functools.partial(superMenu.redrawState, mainMenuStates[key], mainMenuStates[key].getSurfaceRects())
@@ -258,6 +261,23 @@ class guiState(rydeplayer.states.gui.SuperStates):
         mainMenuStates[lastkey].down = 'band'
         mainMenuStates[firstkey].up = 'power'
         lastkey = 'power'
+        mainMenuStates["band-sel"].setParentLabel(mainMenuStates['band'])
+        mainMenuStates["preset-sel"].setParentLabel(mainMenuStates['preset'])
+        mainMenuStates["power-sel"].setParentLabel(mainMenuStates['power'])
+
+        # add audio menu if enabled in config
+        if config.audio.enableMenu:
+            audioMenuStates = {
+                'mute' : rydeplayer.states.gui.SubMenuItemFunction(self.theme, '(Un)Mute', 'voldn', 'volup', toggleMuteFunc),
+                'volup' : rydeplayer.states.gui.SubMenuItemFunction(self.theme, 'Volume +', 'mute', 'voldn', functools.partial(adjVolFunc,True)),
+                'voldn' : rydeplayer.states.gui.SubMenuItemFunction(self.theme, 'Volume -', 'volup', 'mute', functools.partial(adjVolFunc,False))
+            }
+            mainMenuStates['audio-sel'] = rydeplayer.states.gui.SubMenuGeneric(self.theme, 'audio', audioMenuStates, 'mute')
+            mainMenuStates['audio'] = rydeplayer.states.gui.MenuItem(self.theme, "Audio", lastkey, firstkey, "audio-sel")
+            mainMenuStates[lastkey].down = 'audio'
+            mainMenuStates[firstkey].up = 'audio'
+            lastkey = 'audio'
+            mainMenuStates["audio-sel"].setParentLabel(mainMenuStates['audio'])
         
         # add debug menu if enabled in config
         if config.debug.enableMenu:
@@ -279,16 +299,17 @@ class guiState(rydeplayer.states.gui.SuperStates):
             mainMenuStates[lastkey].down = 'debug'
             mainMenuStates[firstkey].up = 'debug'
             lastkey = 'debug'
+            mainMenuStates["debug-sel"].setParentLabel(mainMenuStates['debug'])
         validCallFunc = superMenu.refreshStates
         config.tuner.addVarChangeCallbackFunction(validCallFunc)
         activeCallbacks.add(functools.partial(config.tuner.removeVarChangeCallbackFunction,validCallFunc))
 
         return (mainMenuStates, firstkey, cleanupFunc)
 
-    def startup(self, config, debugFunctions):
+    def startup(self, config, debugFunctions, toggleMuteFunc, adjVolumeFunc):
         # top level state machine
         self.state_dict = {
-            'menu': rydeplayer.states.gui.Menu(self.theme, 'home', functools.partial(self._genMenuStates, config, debugFunctions)),
+            'menu': rydeplayer.states.gui.Menu(self.theme, 'home', functools.partial(self._genMenuStates, config, debugFunctions, toggleMuteFunc, adjVolumeFunc)),
             'home': Home(self.theme, self.osd)
         }
         self.state_name = "home"
@@ -314,12 +335,8 @@ class guiState(rydeplayer.states.gui.SuperStates):
                 self.player.toggleMute()
             elif(event == rydeplayer.common.navEvent.VOLU):
                 self.player.adjustVolumeByStep(True)
-                self.player.setMute(False)
-                self.osd.activate(3, rydeplayer.osd.display.TimerLength.USERTRIGGER)
             elif(event == rydeplayer.common.navEvent.VOLD):
                 self.player.adjustVolumeByStep(False)
-                self.player.setMute(False)
-                self.osd.activate(3, rydeplayer.osd.display.TimerLength.USERTRIGGER)
             elif(event == rydeplayer.common.navEvent.CHANU):
                 self.player.switchPresetRelative(-1)
             elif(event == rydeplayer.common.navEvent.CHAND):
@@ -368,6 +385,7 @@ class rydeConfig(object):
             'muteOnStartup': False,
             'volumeOnStartup': 100,
             'volumeStep': 25,
+            'enableMenu': False
             })
         self.debug = type('debugConfig', (object,), {
             'enableMenu': False,
@@ -537,6 +555,12 @@ class rydeConfig(object):
                         else:
                             print("Invalid volume step config, skipping")
                             perfectConfig = False
+                    if 'enableMenu' in config['audio']:
+                        if isinstance(config['audio']['enableMenu'], bool):
+                            self.audio.enableMenu = config['audio']['enableMenu']
+                        else:
+                            print("Invalid audio menu config, skipping")
+                            perfectConfig = False
 
             # parse debug options
             if 'debug' in config:
@@ -657,7 +681,7 @@ class player(object):
 
         # start ui
         self.app = guiState(self.theme, self.config.shutdownBehavior, self, self.osd)
-        self.app.startup(self.config, debugFunctions)
+        self.app.startup(self.config, debugFunctions, self.toggleMute, self.adjustVolumeByStep)
 
         # start network
         self.netMan = rydeplayer.network.networkManager(self.config, self.stepSM, self.setMute, debugFunctions)
@@ -742,6 +766,8 @@ class player(object):
             self.adjustVolume(self.config.audio.volumeStep)
         else:
             self.adjustVolume(-self.config.audio.volumeStep)
+        self.setMute(False)
+        self.osd.activate(3, rydeplayer.osd.display.TimerLength.USERTRIGGER)
 
     def getPresetName(self, preset):
         if preset in self.config.presets:

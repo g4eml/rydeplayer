@@ -1,5 +1,5 @@
 #    Ryde Player provides a on screen interface and video player for Longmynd compatible tuners.
-#    Copyright © 2021 Tim Clark
+#    Copyright © 2023 Tim Clark
 #
 #    This program is free software: you can redistribute it and/or modify
 #    it under the terms of the GNU General Public License as published by
@@ -15,6 +15,7 @@
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import pygame, math, enum, pydispmanx, functools
+import pygame.gfxdraw
 from PIL import Image
 from ..common import navEvent
 
@@ -66,9 +67,16 @@ class StatesSurface(States):
         return [self.surfacerect]
     def getBlitPairs(self):
         return [(self.surface, self.surfacerect)]
+    def setRefPoint(self, horizontal, vertical):
+        self.surfacerect.top = vertical
+        self.surfacerect.left = horizontal
+        return (self.surfacerect.right, self.surfacerect.bottom)
 
 # SuperState with surface support
 class SuperStatesSurface(SuperStates, StatesSurface):
+    def __init__(self, theme):
+        super().__init__(theme)
+        self.parentLabel = None
     def redrawState(self, state, rects):
         for rect in rects:
             self.surface.fill(self.theme.colours.backgroundSubMenu, rect)
@@ -82,6 +90,31 @@ class SuperStatesSurface(SuperStates, StatesSurface):
             self.redrawState(oldstate, oldrects)
         if isinstance(self.state, StatesSurface):
             self.redrawState(self.state, self.state.getSurfaceRects())
+    def setParentLabel(self, label):
+        self.parentLabel = label
+    def getParentLabel(self):
+        return self.parentLabel
+    def cleanup(self):
+        if self.parentLabel is not None:
+            if isinstance(self.parentLabel, (MenuItem, SubMenuItem)):
+                self.parentLabel.setHighlight(False)
+        super().cleanup()
+    def startup(self):
+        if self.parentLabel is not None:
+            if isinstance(self.parentLabel, (MenuItem, SubMenuItem)):
+                self.parentLabel.setHighlight(True)
+    def setStateStack(self, stateStack):
+        oldLabel = None
+        if isinstance(self.state, SuperStatesSurface):
+            oldLabel = self.state.getParentLabel()
+        super().setStateStack(stateStack)
+        if oldLabel is not None and oldLabel is not self.state:
+            if not isinstance(self.state, SuperStatesSurface) or self.state.getParentLabel() is not oldLabel:
+                self.redrawState(oldLabel, oldLabel.getSurfaceRects())
+        if isinstance(self.state, SuperStatesSurface):
+            parentLabel = self.state.getParentLabel()
+            if parentLabel is not None:
+                self.redrawState(parentLabel, parentLabel.getSurfaceRects())
 
 # Basic menu item that draws and navigates but nothing else
 class MenuItem(StatesSurface):
@@ -89,6 +122,7 @@ class MenuItem(StatesSurface):
         super().__init__(theme)
         self.next = None
         self.done = False
+        self.highlighted = False;
         self.label = label
         self.validTrack = validTrack
         boxheight = self.theme.fonts.menuH1.size(label)[1]
@@ -119,15 +153,20 @@ class MenuItem(StatesSurface):
     def redrawText(self):
         self.textSurface = self.drawText(self.label)
         self.redraw()
+    def setHighlight(self, highlight):
+        if self.highlighted != highlight:
+            self.highlighted = highlight
+            if highlight:
+                # repaint with transparent background
+                self.backColour = self.theme.colours.transpBack
+            else:
+                # repaint with highlighted background
+                self.backColour = self.theme.colours.transparent
+            self.redraw()
     def cleanup(self):
-        # repaint with transparent background
-        self.backColour = self.theme.colours.transparent
-        self.redraw()
+        self.setHighlight(False)
     def startup(self):
-        # repaint with highlighted background
-        self.backColour = self.theme.colours.transpBack
-        self.redraw()
-
+        self.setHighlight(True)
     def get_event(self, event):
         if( event == navEvent.UP):
             if(self.up != None):
@@ -145,6 +184,10 @@ class MenuItem(StatesSurface):
                 self.done=True
                 return True
         return False
+    def setRefPoint(self, horizontal, vertical):
+        self.surfacerect.top = vertical
+        self.surfacerect.right = horizontal
+        return (self.surfacerect.left, self.surfacerect.bottom)
 
 # A basic menu item for submenus
 class SubMenuItem(StatesSurface):
@@ -152,6 +195,7 @@ class SubMenuItem(StatesSurface):
         super().__init__(theme)
         self.next = None
         self.done = False
+        self.highlighted = False;
         self.label = label
         self.validTrack = validTrack
         self.up = up
@@ -183,12 +227,20 @@ class SubMenuItem(StatesSurface):
     def redrawText(self):
         self.textSurface = self.drawText(self.label)
         self.redraw()
+    def setHighlight(self, highlight):
+        if self.highlighted != highlight:
+            self.highlighted = highlight
+            if highlight:
+                # repaint with transparent background
+                self.backColour = self.theme.colours.transpBack
+            else:
+                # repaint with highlighted background
+                self.backColour = self.theme.colours.transparent
+            self.redraw()
     def cleanup(self):
-        self.backColour = self.theme.colours.transparent
-        self.redraw()
+        self.setHighlight(False)
     def startup(self):
-        self.backColour = self.theme.colours.transpBack
-        self.redraw()
+        self.setHighlight(True)
     def get_event(self, event):
         if( event == navEvent.UP):
             if(self.up != None):
@@ -212,6 +264,7 @@ class SubMenuGeneric(SuperStatesSurface):
     def __init__(self, theme, backState, state_dict, initstate):
         super().__init__(theme)
         # where to go back to
+        self.back = backState
         self.next = backState
         self.top = 0
         self.left = 0
@@ -245,6 +298,7 @@ class SubMenuGeneric(SuperStatesSurface):
         return (drawnext, itemleft)
 
     def startup(self):
+        super().startup()
         (drawnext, itemleft) = self.buildStates()
         # align the menu items and sub items
         self.state = self.state_dict[self.state_name]
@@ -253,12 +307,10 @@ class SubMenuGeneric(SuperStatesSurface):
                 menuState.top = drawnext+self.top
                 menuState.left = itemleft
             elif(isinstance(menuState, ListSelect)):
-                menuState.surfacerect.top = drawnext+self.top
-                menuState.surfacerect.left = itemleft
+                menuState.setRefPoint(itemleft, drawnext+self.top)
             elif(isinstance(menuState, SubMenuItem)):
-                menuState.surfacerect.top = drawnext
-                menuState.surfacerect.left = 0
-                drawnext = menuState.surfacerect.bottom + self.theme.menuHeight*0.01
+                surfaceHRef, surfaceVRef = menuState.setRefPoint(0, drawnext)
+                drawnext = surfaceVRef + self.theme.menuHeight*0.01
                 self.surface.blit(menuState.get_surface(), menuState.surfacerect)
         self.state.startup()
 
@@ -290,10 +342,16 @@ class SubMenuGeneric(SuperStatesSurface):
             return True
         else:
             if event == navEvent.BACK or event == navEvent.LEFT:
+                self.next = self.back
                 self.done = True
                 return True
             else:
                 return False
+
+    def setRefPoint(self, horizontal, vertical):
+        self.top = vertical
+        self.left = horizontal
+        return (None, None)
 
 # Simple menu item that executes a callback function when it is "selected"
 class MenuItemFunction(MenuItem):
@@ -343,7 +401,7 @@ class ListSelectItem(StatesSurface):
         self.up = up
         self.down = down
         # draw the surface
-        boxheight = self.theme.fonts.menuH1.size(label)[1]
+        boxheight = self.theme.fonts.menuH1.get_height()
         self.surface = pygame.Surface((boxwidth, boxheight), pygame.SRCALPHA)
         self.textSurface = self.theme.fonts.menuH1.render(label, True, self.theme.colours.black)
         self.surface.fill(self.theme.colours.transparent)
@@ -401,6 +459,7 @@ class ListSelect(SuperStatesSurface):
     def __init__(self, theme, backState, items, currentValueFunction, updateCallback):
         super().__init__(theme)
         # where to go back to
+        self.back = backState
         self.next = backState
         # dictionary of key:displaytext pairs
         self.items = items
@@ -410,12 +469,18 @@ class ListSelect(SuperStatesSurface):
         self.updateCallback = updateCallback
         # work out what size all the list items have to be before creating them
         maxitemwidth = 0
-        boxheight = self.theme.menuHeight*0.01
         for label in self.items.values():
             maxitemwidth = max(maxitemwidth,self.theme.fonts.menuH1.size(label)[0])
-            rowheight = self.theme.fonts.menuH1.size(label)[1] + self.theme.menuHeight*0.01
-            boxheight += rowheight
+        self.rowheight = int(self.theme.fonts.menuH1.get_height() + self.theme.menuSpace)
+        self.visible = len(self.items.values())
+        boxheight = self.theme.menuSpace + (self.rowheight * self.visible)
         boxwidth = maxitemwidth + self.theme.menuWidth*0.2
+        self.scroll = boxheight > self.theme.menuHeight
+        if self.scroll:
+            boxheight = self.theme.menuHeight
+            self.visible = int(self.theme.menuHeight - (self.theme.menuSpace*3))//self.rowheight
+            if int(self.theme.menuHeight - (self.theme.menuSpace*3))%self.rowheight < (self.rowheight*0.5):
+                self.visible -= 1
         self.surface = pygame.Surface((boxwidth, boxheight), pygame.SRCALPHA)
         self.surface.fill(self.theme.colours.transparent)
         self.surfacerect = self.surface.get_rect()
@@ -436,10 +501,90 @@ class ListSelect(SuperStatesSurface):
         if initialvalue not in itemkeys:
             initialvalue = None
         self.state_name = initialvalue
+    def _getScrollOffset(self, state):
+        menuLen = 0
+        thisIdx = None
+        for menuState in self.state_dict.values():
+            if isinstance(menuState, ListSelectItem):
+                if menuState is state:
+                    thisIdx = menuLen
+                menuLen +=1
+        if thisIdx is None:
+            return 0
+        else:
+            return min(menuLen-self.visible, max(0, thisIdx-(self.visible/2)))
+    def _drawArrow(self, arrowHeight, isUp, isActive):
+        inset = 2
+        width = max(int(arrowHeight*0.15)-1,0)
+        refSize = (int(arrowHeight/2)*2)+2
+        surface = pygame.Surface((refSize, refSize), pygame.SRCALPHA)
+        arrowVertices = [
+                (inset, surface.get_height()-inset if isUp else inset),
+                (surface.get_width()/2,surface.get_height()-inset if not isUp else inset),
+                (surface.get_width()-inset, surface.get_height()-inset if isUp else inset),
+                (surface.get_width()-(width+inset), surface.get_height()-inset if isUp else inset),
+                (surface.get_width()/2,surface.get_height()-((width*2)+inset) if not isUp else (width*2)+inset),
+                (width+inset, surface.get_height()-inset if isUp else inset)
+                ]
+        pygame.gfxdraw.aapolygon(surface, arrowVertices, (self.theme.colours.black if isActive else self.theme.colours.menuBlackInactive))
+        pygame.gfxdraw.filled_polygon(surface, arrowVertices, (self.theme.colours.black if isActive else self.theme.colours.menuBlackInactive))
+        return surface
+    def _drawMenu(self):
+        self.surface.fill(self.theme.colours.backgroundSubMenu)
+        startin = self._getScrollOffset(self.state)
+        if self.scroll:
+            drawnext = math.ceil((self.theme.menuHeight-((self.rowheight*self.visible)-(self.theme.menuSpace)))/2)
+            # draw top arrow
+            arrowHeight = drawnext - (self.theme.menuSpace*2)
+            arrowSurface = self._drawArrow(arrowHeight, True, startin >= 1)
+            arrowRect = arrowSurface.get_rect()
+            arrowRect.top = self.theme.menuSpace
+            arrowRect.centerx = self.surface.get_width()/2
+            self.surface.blit(arrowSurface, arrowRect)
+        else:
+            drawnext = self.theme.menuSpace
+        # draw all the items
+        enableDownArrow = False
+        itemsDrawn = 0
+        for menuState in self.state_dict.values():
+            if isinstance(menuState, ListSelectItem):
+                if startin <1:
+                    if itemsDrawn < self.visible:
+                        surfaceHRef, surfaceVRef = menuState.setRefPoint(0, drawnext)
+                        drawnext = int(surfaceVRef+ self.theme.menuSpace)
+                        self.surface.blit(menuState.get_surface(), menuState.surfacerect)
+                        itemsDrawn+=1
+                    else:
+                        enableDownArrow=True
+                else:
+                    startin -=1
+        if self.scroll:
+            # draw bottom arrow
+            arrowSurface = self._drawArrow(arrowHeight, False, enableDownArrow)
+            arrowRect = arrowSurface.get_rect()
+            arrowRect.bottom = self.theme.menuHeight - self.theme.menuSpace
+            arrowRect.centerx = self.surface.get_width()/2
+            self.surface.blit(arrowSurface, arrowRect)
+    def update(self):
+        if self.scroll:
+            oldstate = self.state
+            if isinstance(oldstate, StatesSurface):
+                oldrects = oldstate.getSurfaceRects()
+            super(SuperStatesSurface, self).update()
+            if self._getScrollOffset(oldstate) != self._getScrollOffset(self.state):
+                self._drawMenu()
+            else:
+                if isinstance(oldstate, StatesSurface):
+                    self.redrawState(oldstate, oldrects)
+                if isinstance(self.state, StatesSurface):
+                    self.redrawState(self.state, self.state.getSurfaceRects())
+        else:
+            super().update()
     def cleanup(self):
         super().cleanup()
         self.surface.fill(self.theme.colours.transparent)
     def startup(self, startValue = (False,None)):
+        super().startup()
         if startValue[0]:
             initialvalue = startValue[1]
         else:
@@ -447,22 +592,14 @@ class ListSelect(SuperStatesSurface):
         if initialvalue not in self.items:
             initialvalue = None
         self.state_name = initialvalue
-        self.surface.fill(self.theme.colours.backgroundSubMenu)
         self.state = self.state_dict[self.state_name]
-        
-        # draw all the items
-        drawnext = self.theme.menuHeight*0.01
-        for menuState in self.state_dict.values():
-            if isinstance(menuState, ListSelectItem):
-                menuState.surfacerect.top = drawnext
-                menuState.surfacerect.left = 0
-                drawnext = menuState.surfacerect.bottom + self.theme.menuHeight*0.01
-                self.surface.blit(menuState.get_surface(), menuState.surfacerect)
+        self._drawMenu()
         # start the default state
         self.state.startup()
         if isinstance(self.state, ListSelectItem):
             self.surface.blit(self.state.get_surface(), self.state.surfacerect)
     def get_event(self, event):
+        self.next = self.back
         if(not self.state.get_event(event)):
             if(event == navEvent.BACK or event == navEvent.LEFT):
                 self.done = True
@@ -475,6 +612,15 @@ class ListSelect(SuperStatesSurface):
                 self.done = True
                 return True
         return False
+    def setRefPoint(self, horizontal, vertical):
+        if self.scroll:
+            self.surfacerect.top = 0;
+        elif self.surfacerect.height+vertical > self.theme.menuHeight:
+            self.surfacerect.bottom = self.theme.menuHeight
+        else:
+            self.surfacerect.top = vertical
+        self.surfacerect.left = horizontal
+        return (self.surfacerect.right, self.surfacerect.bottom)
 
 # single character selector for a larger string
 class CharacterSelect(StatesSurface):
@@ -592,6 +738,7 @@ class CharSeqSelect(SuperStatesSurface):
         self.valueConfig = valueConfig
         # where to go back to
         self.suffix = ""
+        self.back = backState
         self.next = backState
         self.top = 0
         self.left = 0
@@ -604,6 +751,7 @@ class CharSeqSelect(SuperStatesSurface):
         self.state_name = '0'
         self.surface.fill(self.theme.colours.transparent)
     def startup(self):
+        super().startup()
         self.currentValue = self.valueConfig.getValue()
         self._updateValid(self.currentValue)
         # how big a box do we need
@@ -648,6 +796,7 @@ class CharSeqSelect(SuperStatesSurface):
         self.state.startup()
         self.surface.blit(self.state.get_surface(), self.state.surfacerect)
     def get_event(self, event):
+        self.next = self.back
         handeled = self.state.get_event(event)
         newValue = self._getValue()
         self._updateValid(newValue)
@@ -670,6 +819,10 @@ class CharSeqSelect(SuperStatesSurface):
         else:
             return True
         return False
+    def setRefPoint(self, horizontal, vertical):
+        self.top = vertical
+        self.left = horizontal
+        return (None, None)
 
 # sub menu for inputing whole numbers and pass new value to callback when done
 class NumberSelect(CharSeqSelect):
@@ -830,14 +983,17 @@ class MultipleNumberSelect(SubMenuGeneric):
     def addValue(self, newValueConfig):
         self.valueConfig.append(newValueConfig.getValue())
         self.updateCallback()
+        self.next = self.back
         self.done = True
 
     def deleteValue(self, deleteIndex):
         del(self.valueConfig[deleteIndex])
         self.updateCallback()
+        self.next = self.back
         self.done = True
 
     def get_event(self, event):
+        self.next = self.back
         if self.state.get_event(event):
             # when exiting single mode also close this
             if self.state.done and self.valueConfig.single:
@@ -855,6 +1011,7 @@ class MultipleNumberSelect(SubMenuGeneric):
 class Menu(SuperStatesSurface):
     def __init__(self, theme, nextstate, stateDictGenFunc):
         super().__init__(theme)
+        self.back = nextstate
         self.next = nextstate
         self.done = False
         self.stateDictGenFunc = stateDictGenFunc
@@ -881,6 +1038,7 @@ class Menu(SuperStatesSurface):
         self.dispmanxlayer = None
 
     def startup(self):
+        super().startup()
         self.state_dict, initstate, self.cleanupFunc=self.stateDictGenFunc(self)
         # open and connect the display
         self.dispmanxlayer = pydispmanx.dispmanxLayer(4)
@@ -908,21 +1066,19 @@ class Menu(SuperStatesSurface):
         #TODO: auto sort so input dict isnt order sensitive
         for menuState in self.state_dict.values():
             if(isinstance(menuState, ListSelect)):
-                menuState.surfacerect.top = drawnext
-                menuState.surfacerect.left = self.theme.menuWidth
+                menuState.setRefPoint(self.theme.menuWidth, drawnext)
                 self.surface.blit(menuState.get_surface(), menuState.surfacerect)
             elif(isinstance(menuState, CharSeqSelect) or isinstance(menuState, SubMenuGeneric)):
-                menuState.top = drawnext
-                menuState.left = self.theme.menuWidth
+                menuState.setRefPoint(self.theme.menuWidth, drawnext)
                 print((drawnext, self.theme.menuWidth))
 #                self.surface.blit(menuState.get_surface(), menuState.surfacerect)
             elif(isinstance(menuState, MenuItem)):
-                menuState.surfacerect.top = drawnext
-                menuState.surfacerect.right = self.theme.menuWidth*0.9
-                drawnext = menuState.surfacerect.bottom + self.theme.menuHeight*0.01
+                surfaceHRef, surfaceVRef = menuState.setRefPoint(self.theme.menuWidth*0.9, drawnext)
+                drawnext = surfaceVRef + self.theme.menuHeight*0.01
                 self.surface.blit(menuState.get_surface(), menuState.surfacerect)
 
     def get_event(self, event):
+        self.next = self.back
         # Always handle this event
         if(event == navEvent.MENU):
             self.done = True
@@ -941,6 +1097,7 @@ class Menu(SuperStatesSurface):
             self.surface.blits(state.getBlitPairs())
 
     def refreshStates(self, passedVar):
+        self.next = self.back
         # shutdown current state if there is no support to maintain its internal state, should end up at a supported state
         if not (isinstance(self.state, ListSelect) or isinstance(self.state, MenuItem)):
             self.state.done = True
