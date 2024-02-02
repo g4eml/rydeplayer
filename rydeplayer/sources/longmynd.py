@@ -20,6 +20,8 @@ import rydeplayer.sources.common
 import pyftdi.ftdi
 import pyftdi.usbtools
 import pyftdi.eeprom
+import usb.core
+import usb.util
 
 class inPortEnum(enum.Enum):
     TOP = enum.auto()
@@ -749,13 +751,22 @@ class lmManager(object):
     def start(self):
         if self.activeConfig.isValid():
             if self.process == None :
-                devices = self._fetchFtdiDevices()
-                validTuners = [rydeplayer.sources.common.ftdiConfigs.MINITIOUNER.configSet, rydeplayer.sources.common.ftdiConfigs.MINITIOUNEREXPRESS.configSet, rydeplayer.sources.common.ftdiConfigs.MINITIOUNER_S.configSet, rydeplayer.sources.common.ftdiConfigs.MINITIOUNER_PRO_TS1.configSet, rydeplayer.sources.common.ftdiConfigs.MINITIOUNER_PRO_TS2.configSet]
                 foundDevice = None
-                for device in devices:
-                    if devices[device] in validTuners:
-                        foundDevice = device
-                        break
+                BATCdev=usb.core.find(idVendor=0x2E8A, idProduct=0x1234)
+                if BATCdev is not None:
+                    if usb.util.get_string(BATCdev,BATCdev.iProduct) == "BATC Pico Minitiouner":
+                        foundDevice = BATCdev
+                        devbus = BATCdev.bus
+                        devaddress = BATCdev.address
+                else:
+                    devices = self._fetchFtdiDevices()
+                    validTuners = [rydeplayer.sources.common.ftdiConfigs.MINITIOUNER.configSet, rydeplayer.sources.common.ftdiConfigs.MINITIOUNEREXPRESS.configSet, rydeplayer.sources.common.ftdiConfigs.MINITIOUNER_S.configSet, rydeplayer.sources.common.ftdiConfigs.MINITIOUNER_PRO_TS1.configSet, rydeplayer.sources.common.ftdiConfigs.MINITIOUNER_PRO_TS2.configSet]
+                    for device in devices:
+                        if devices[device] in validTuners:
+                            foundDevice = device
+                            devaddress = foundDevice[0].address
+                            devbus = foundDevice[0].bus
+                            break
                 if foundDevice is not None:
                     print("start")
                     self.lmstarted = False
@@ -763,7 +774,7 @@ class lmManager(object):
                     self.autoresetdetect = False
                     self.statelog=[]
                     self.lmlog=[]
-                    args = [self.lmpath, '-t', self.mediaFIFOfilename, '-s', self.statusFIFOfilename, '-r', str(self.tsTimeout), '-u', str(foundDevice[0].bus), str(foundDevice[0].address)]
+                    args = [self.lmpath, '-t', self.mediaFIFOfilename, '-s', self.statusFIFOfilename, '-r', str(self.tsTimeout), '-u', str(devbus), str(devaddress)]
                     if self.activeConfig.band.getInputPort() == inPortEnum.BOTTOM:
                         args.append('-w')
                     if self.activeConfig.band.getPolarity() == PolarityEnum.HORIZONTAL:
