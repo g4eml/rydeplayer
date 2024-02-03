@@ -752,7 +752,7 @@ class lmManager(object):
         if self.activeConfig.isValid():
             if self.process == None :
                 foundDevice = None
-                BATCdev=usb.core.find(idVendor=0x2E8A, idProduct=0x1234)
+                BATCdev=usb.core.find(idVendor=0x2E8A, idProduct=0xBA2C)
                 if BATCdev is not None:
                     if usb.util.get_string(BATCdev,BATCdev.iProduct) == "BATC Pico Minitiouner":
                         foundDevice = BATCdev
