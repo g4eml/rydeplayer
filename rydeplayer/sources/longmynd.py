@@ -754,7 +754,7 @@ class lmManager(object):
                 foundDevice = None
                 BATCdev=usb.core.find(idVendor=0x2E8A, idProduct=0xBA2C)
                 if BATCdev is not None:
-                    if usb.util.get_string(BATCdev,BATCdev.iProduct) == "BATC Pico Minitiouner":
+                    if usb.util.get_string(BATCdev,BATCdev.iProduct) == "BATC PicoTuner":
                         foundDevice = BATCdev
                         devbus = BATCdev.bus
                         devaddress = BATCdev.address
